@@ -1,0 +1,60 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Virtual environment
+.venv/
+venv/
+.venv
+venv
+
+# Lock files (use uv.lock, not others)
+# uv.lock is committed for reproducible installs
+# *.lock
+# pip-lock.yaml
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.eggs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+*.egg
+
+# Data (user-specific)
+data/
+.store/
+
+# Checkpoints (runtime state)
+# .checkpoints/
+
+# Logs
+*.log
+
+
+# 所有根目录点号开头的文件夹（运行时产物、缓存等），除 .git 和 .claude 外
+# !.git/
+# !.claude/
+.*/
+
