@@ -149,7 +149,7 @@ async def _parallel_executor(state: dict) -> dict:
             results_dict[result.id] = result.result or f"[无结果] {result.error or '任务未执行'}"
 
     # 清理 registry
-    _running_tasks_registry.pop(key, None)
+    _running_tasks_registry.pop(cancel_key, None)
 
     plan.check_complete()
 
@@ -319,7 +319,6 @@ def resume_graph(graph: CompiledStateGraph, config: Optional[dict] = None, resum
     # 重置被取消的任务
     current_state = graph.get_state(invoke_config)
     if current_state and current_state.values:
-        graph.update_state(invoke_config, {"_cancel_key": key, "_config": invoke_config})
         plan: Plan = current_state.values.get("plan")
         if plan:
             reset_ids = []
@@ -333,6 +332,21 @@ def resume_graph(graph: CompiledStateGraph, config: Optional[dict] = None, resum
                 results_dict = current_state.values.get("results", {})
                 for rid in reset_ids:
                     results_dict.pop(rid, None)
+                # 将修改后的 plan 和 results 写回 state
+                graph.update_state(
+                    invoke_config,
+                    {
+                        "_cancel_key": key,
+                        "_config": invoke_config,
+                        "plan": plan,
+                        "results": results_dict,
+                    }
+                )
+        else:
+            graph.update_state(invoke_config, {"_cancel_key": key, "_config": invoke_config})
+    else:
+        # 如果 state 不存在，至少更新 cancel_key
+        graph.update_state(invoke_config, {"_cancel_key": key, "_config": invoke_config})
 
     command = Command(resume=resume_value)
     return asyncio.run(_run_async_command(graph, command, invoke_config))
