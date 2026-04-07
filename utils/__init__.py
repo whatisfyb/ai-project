@@ -1,5 +1,9 @@
 """Developer utilities"""
 
+# 全局配置 LangSmith（在任何 LLM 调用之前）
+from utils.langsmith import configure_langsmith
+configure_langsmith()
+
 from utils.llm import get_llm_model, get_all_llm_models, reset_llm_models
 from utils.embedding import (
     get_embedding_model,
@@ -8,7 +12,6 @@ from utils.embedding import (
     get_embedding_dimension,
     reset_embedding_model,
 )
-from utils.langsmith import configure_langsmith
 from utils.config import Settings
 from utils.file_loader import FileLoader
 from utils.text_splitter import TextSplitter, create_default_splitter, create_pipeline_splitter
