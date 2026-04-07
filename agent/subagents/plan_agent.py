@@ -4,31 +4,11 @@ import json
 from typing import Literal
 from typing_extensions import TypedDict
 
-from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END, START
 
+from agent.models import Plan, Task
 from agent.subagents.base import BaseSubagent
-
-
-# ============ Pydantic 模型 ============
-
-class Task(BaseModel):
-    """单个任务"""
-    id: str = Field(description="任务唯一标识，如 T1, T2, T3")
-    description: str = Field(description="任务详细描述")
-    dependencies: list[str] = Field(default=[], description="依赖的任务 ID 列表")
-    status: Literal["pending", "in_progress", "completed", "failed"] = Field(
-        default="pending", description="任务状态"
-    )
-
-
-class Plan(BaseModel):
-    """执行计划"""
-    goal: str = Field(description="整体目标")
-    tasks: list[Task] = Field(description="任务列表")
-    status: Literal["pending", "in_progress", "completed", "failed"] = Field(
-        default="pending", description="计划状态"
-    )
+from agent.plan_store import PlanStore
 
 
 # ============ Agent 状态 ============
@@ -37,6 +17,7 @@ class PlanAgentState(TypedDict):
     """Plan Agent 状态"""
     task: str  # 原始任务
     plan: Plan | None  # 生成的计划
+    plan_id: str | None  # 持久化 ID
 
 
 class PlanAgent(BaseSubagent[PlanAgentState]):
@@ -47,7 +28,12 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
     - 拆解为可执行的子任务
     - 生成执行计划
     - 识别依赖关系
+    - 持久化存储
     """
+
+    def __init__(self):
+        super().__init__()
+        self.store = PlanStore()
 
     @property
     def agent_type(self) -> str:
@@ -64,6 +50,7 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
     def _plan_node(self, state: PlanAgentState) -> dict:
         """生成计划节点"""
         task = state["task"]
+        thread_id = state.get("thread_id", "default")
 
         # 获取 JSON schema 用于提示词
         schema = Plan.model_json_schema()
@@ -109,7 +96,10 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
                 status="pending"
             )
 
-        return {"plan": plan}
+        # 持久化存储
+        plan_id = self.store.save_plan(plan, thread_id)
+
+        return {"plan": plan, "plan_id": plan_id}
 
     def build_graph(self) -> StateGraph:
         """构建状态图"""
@@ -124,7 +114,7 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
 
         return graph
 
-    def run(self, task: str, thread_id: str = "default") -> Plan:
+    def run(self, task: str, thread_id: str = "default") -> tuple[Plan, str]:
         """运行 Plan Agent
 
         Args:
@@ -132,11 +122,86 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
             thread_id: 会话 ID
 
         Returns:
-            Plan 对象
+            (Plan 对象, plan_id)
         """
         input_data = {
             "task": task,
             "plan": None,
+            "plan_id": None,
         }
         result = super().run(input_data, thread_id)
-        return result.get("plan")
+        return result.get("plan"), result.get("plan_id")
+
+    # ============ 恢复与管理方法 ============
+
+    def resume_plan(self, plan_id: str) -> Plan | None:
+        """恢复 Plan
+
+        Args:
+            plan_id: Plan ID
+
+        Returns:
+            Plan 对象，不存在返回 None
+        """
+        return self.store.load_plan(plan_id)
+
+    def get_pending_tasks(self, plan_id: str) -> list[Task]:
+        """获取可执行的待处理 Tasks
+
+        Args:
+            plan_id: Plan ID
+
+        Returns:
+            可执行的 Task 列表（依赖已满足）
+        """
+        return self.store.get_pending_tasks(plan_id)
+
+    def start_task(self, plan_id: str, task_id: str) -> bool:
+        """开始执行 Task
+
+        Args:
+            plan_id: Plan ID
+            task_id: Task ID
+
+        Returns:
+            是否成功
+        """
+        return self.store.update_task_status(plan_id, task_id, "in_progress")
+
+    def complete_task(self, plan_id: str, task_id: str) -> bool:
+        """完成 Task
+
+        Args:
+            plan_id: Plan ID
+            task_id: Task ID
+
+        Returns:
+            是否成功
+        """
+        return self.store.update_task_status(plan_id, task_id, "completed")
+
+    def fail_task(self, plan_id: str, task_id: str) -> bool:
+        """Task 失败
+
+        Args:
+            plan_id: Plan ID
+            task_id: Task ID
+
+        Returns:
+            是否成功
+        """
+        return self.store.update_task_status(plan_id, task_id, "failed")
+
+    def list_plans(
+        self,
+        status: Literal["pending", "in_progress", "completed", "failed"] | None = None
+    ) -> list:
+        """列出 Plans
+
+        Args:
+            status: 按状态过滤
+
+        Returns:
+            Plan 列表
+        """
+        return self.store.list_plans(status=status)
