@@ -60,6 +60,7 @@ class PlanStore:
                     description TEXT NOT NULL,
                     dependencies TEXT NOT NULL,
                     status TEXT NOT NULL,
+                    result TEXT,
                     PRIMARY KEY (task_id, plan_id),
                     FOREIGN KEY (plan_id) REFERENCES plans(plan_id)
                 )
@@ -95,10 +96,10 @@ class PlanStore:
             for task in plan.tasks:
                 conn.execute(
                     """
-                    INSERT OR REPLACE INTO tasks (task_id, plan_id, description, dependencies, status)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO tasks (task_id, plan_id, description, dependencies, status, result)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (task.id, plan_id, task.description, json.dumps(task.dependencies), task.status)
+                    (task.id, plan_id, task.description, json.dumps(task.dependencies), task.status, task.result)
                 )
 
             conn.commit()
@@ -128,17 +129,18 @@ class PlanStore:
 
             # 查询 Tasks
             cursor = conn.execute(
-                "SELECT task_id, description, dependencies, status FROM tasks WHERE plan_id = ?",
+                "SELECT task_id, description, dependencies, status, result FROM tasks WHERE plan_id = ?",
                 (plan_id,)
             )
             tasks = []
             for task_row in cursor.fetchall():
-                task_id, description, dependencies, task_status = task_row
+                task_id, description, dependencies, task_status, result = task_row
                 tasks.append(Task(
                     id=task_id,
                     description=description,
                     dependencies=json.loads(dependencies),
-                    status=task_status
+                    status=task_status,
+                    result=result
                 ))
 
             return Plan(goal=goal, tasks=tasks, status=status)
@@ -147,7 +149,8 @@ class PlanStore:
         self,
         plan_id: str,
         task_id: str,
-        status: Literal["pending", "in_progress", "completed", "failed"]
+        status: Literal["pending", "completed", "failed"],
+        result: str | None = None
     ) -> bool:
         """更新 Task 状态
 
@@ -155,6 +158,7 @@ class PlanStore:
             plan_id: Plan ID
             task_id: Task ID
             status: 新状态
+            result: 任务结果（可选）
 
         Returns:
             是否成功
@@ -163,8 +167,8 @@ class PlanStore:
 
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
-                "UPDATE tasks SET status = ? WHERE task_id = ? AND plan_id = ?",
-                (status, task_id, plan_id)
+                "UPDATE tasks SET status = ?, result = ? WHERE task_id = ? AND plan_id = ?",
+                (status, result, task_id, plan_id)
             )
             conn.execute(
                 "UPDATE plans SET updated_at = ? WHERE plan_id = ?",
@@ -177,7 +181,7 @@ class PlanStore:
     def update_plan_status(
         self,
         plan_id: str,
-        status: Literal["pending", "in_progress", "completed", "failed"]
+        status: Literal["pending", "completed", "failed"]
     ) -> bool:
         """更新 Plan 状态
 
@@ -201,7 +205,7 @@ class PlanStore:
 
     def list_plans(
         self,
-        status: Literal["pending", "in_progress", "completed", "failed"] | None = None,
+        status: Literal["pending", "completed", "failed"] | None = None,
         thread_id: str | None = None
     ) -> list[PlanRecord]:
         """列出 Plans
@@ -283,21 +287,6 @@ class PlanStore:
                 pending_tasks.append(task)
 
         return pending_tasks
-
-    def get_in_progress_tasks(self, plan_id: str) -> list[Task]:
-        """获取执行中的 Tasks
-
-        Args:
-            plan_id: Plan ID
-
-        Returns:
-            执行中的 Task 列表
-        """
-        plan = self.load_plan(plan_id)
-        if not plan:
-            return []
-
-        return [t for t in plan.tasks if t.status == "in_progress"]
 
     def delete_plan(self, plan_id: str) -> bool:
         """删除 Plan

@@ -156,45 +156,35 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
         """
         return self.store.get_pending_tasks(plan_id)
 
-    def start_task(self, plan_id: str, task_id: str) -> bool:
-        """开始执行 Task
-
-        Args:
-            plan_id: Plan ID
-            task_id: Task ID
-
-        Returns:
-            是否成功
-        """
-        return self.store.update_task_status(plan_id, task_id, "in_progress")
-
-    def complete_task(self, plan_id: str, task_id: str) -> bool:
+    def complete_task(self, plan_id: str, task_id: str, result: str | None = None) -> bool:
         """完成 Task
 
         Args:
             plan_id: Plan ID
             task_id: Task ID
+            result: 任务执行结果
 
         Returns:
             是否成功
         """
-        return self.store.update_task_status(plan_id, task_id, "completed")
+        return self.store.update_task_status(plan_id, task_id, "completed", result)
 
-    def fail_task(self, plan_id: str, task_id: str) -> bool:
+    def fail_task(self, plan_id: str, task_id: str, result: str | None = None) -> bool:
         """Task 失败
 
         Args:
             plan_id: Plan ID
             task_id: Task ID
+            result: 失败原因
 
         Returns:
             是否成功
         """
-        return self.store.update_task_status(plan_id, task_id, "failed")
+        return self.store.update_task_status(plan_id, task_id, "failed", result)
 
     def list_plans(
         self,
-        status: Literal["pending", "in_progress", "completed", "failed"] | None = None
+        status: Literal["pending", "completed", "failed"] | None = None
     ) -> list:
         """列出 Plans
 
