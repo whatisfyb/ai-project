@@ -1,51 +1,42 @@
 """Plan Agent - 复杂任务拆解"""
 
-from typing import Annotated
+import json
+from typing import Literal
 from typing_extensions import TypedDict
-import operator
 
-from langchain_core.tools import tool
+from pydantic import BaseModel, Field
 from langgraph.graph import StateGraph, END, START
 
 from agent.subagents.base import BaseSubagent
 
 
+# ============ Pydantic 模型 ============
+
+class Task(BaseModel):
+    """单个任务"""
+    id: str = Field(description="任务唯一标识，如 T1, T2, T3")
+    description: str = Field(description="任务详细描述")
+    dependencies: list[str] = Field(default=[], description="依赖的任务 ID 列表")
+    status: Literal["pending", "in_progress", "completed", "failed"] = Field(
+        default="pending", description="任务状态"
+    )
+
+
+class Plan(BaseModel):
+    """执行计划"""
+    goal: str = Field(description="整体目标")
+    tasks: list[Task] = Field(description="任务列表")
+    status: Literal["pending", "in_progress", "completed", "failed"] = Field(
+        default="pending", description="计划状态"
+    )
+
+
+# ============ Agent 状态 ============
+
 class PlanAgentState(TypedDict):
     """Plan Agent 状态"""
     task: str  # 原始任务
-    analysis: str | None  # 任务分析结果
-    context: Annotated[list[str], operator.add]  # 收集的上下文
-    plan: str | None  # 生成的计划
-    steps: list[dict] | None  # 拆解的步骤
-
-
-@tool
-def analyze_task(task: str) -> str:
-    """分析任务，识别关键需求和约束
-
-    Args:
-        task: 待分析的任务描述
-
-    Returns:
-        任务分析结果
-    """
-    # 这个工具主要由 LLM 调用，实际逻辑在节点中实现
-    return f"分析任务: {task}"
-
-
-@tool
-def breakdown_task(task: str, context: str) -> list[dict]:
-    """将复杂任务拆解为可执行的子任务
-
-    Args:
-        task: 任务描述
-        context: 相关上下文信息
-
-    Returns:
-        拆解后的子任务列表
-    """
-    # 这个工具主要由 LLM 调用，实际逻辑在节点中实现
-    return [{"step": 1, "task": task}]
+    plan: Plan | None  # 生成的计划
 
 
 class PlanAgent(BaseSubagent[PlanAgentState]):
@@ -68,90 +59,37 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
 
     @property
     def tools(self) -> list:
-        return [analyze_task, breakdown_task]
-
-    def _analyze_node(self, state: PlanAgentState) -> dict:
-        """分析任务节点"""
-        task = state["task"]
-
-        prompt = f"""你是一个任务分析专家。请分析以下任务：
-
-任务：{task}
-
-请从以下角度分析：
-1. 任务目标：这个任务要达成什么？
-2. 关键需求：完成这个任务需要什么？
-3. 潜在挑战：可能遇到什么困难？
-4. 依赖关系：是否有前置条件？
-
-请用简洁的中文回答。"""
-
-        response = self.llm.invoke(prompt)
-        return {"analysis": response.content}
+        return []
 
     def _plan_node(self, state: PlanAgentState) -> dict:
         """生成计划节点"""
         task = state["task"]
-        analysis = state["analysis"] or ""
-        context = "\n".join(state["context"]) if state["context"] else "无"
 
-        prompt = f"""你是一个规划专家。请根据以下信息制定执行计划：
+        # 获取 JSON schema 用于提示词
+        schema = Plan.model_json_schema()
+
+        prompt = f"""你是一个任务规划专家。请分析以下任务，将其拆解为可执行的子任务。
 
 任务：{task}
 
-分析结果：
-{analysis}
+请严格按照以下 JSON Schema 输出结果（只输出 JSON，不要其他内容）：
 
-上下文信息：
-{context}
-
-请制定详细的执行计划，格式如下：
-
-## 执行计划
-
-### 步骤 1: [步骤名称]
-- 描述：[具体要做什么]
-- 输出：[预期产出]
-- 依赖：[是否有前置步骤]
-
-### 步骤 2: ...
-...
-
-### 总结
-- 总步骤数：X
-- 预估复杂度：低/中/高
-- 关键风险：...
-"""
-
-        response = self.llm.invoke(prompt)
-        return {"plan": response.content}
-
-    def _breakdown_node(self, state: PlanAgentState) -> dict:
-        """拆解任务节点"""
-        plan = state["plan"] or ""
-
-        prompt = f"""请将以下计划转换为结构化的步骤列表（JSON 格式）：
-
-{plan}
-
-输出格式：
 ```json
-{{
-  "steps": [
-    {{"step": 1, "name": "步骤名称", "description": "描述", "dependencies": []}},
-    ...
-  ]
-}}
+{json.dumps(schema, ensure_ascii=False, indent=2)}
 ```
 
-只输出 JSON，不要其他内容。"""
+要求：
+1. 拆分为多个有依赖关系的子任务
+2. 每个任务要有唯一 ID（如 T1, T2, T3）
+3. 明确任务之间的依赖关系（某任务依赖哪些其他任务完成后才能执行）
+4. 没有依赖的任务可以并行执行
+5. 使用中文描述
+6. 只输出 JSON，不要输出任何其他内容"""
 
         response = self.llm.invoke(prompt)
         content = response.content
 
-        # 尝试解析 JSON
-        import json
-        steps = []
+        # 解析 JSON
         try:
             # 提取 JSON 块
             if "```json" in content:
@@ -162,31 +100,31 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
                 json_str = content.strip()
 
             data = json.loads(json_str)
-            steps = data.get("steps", [])
-        except (json.JSONDecodeError, KeyError):
-            # 如果解析失败，创建默认步骤
-            steps = [{"step": 1, "name": "执行计划", "description": plan}]
+            plan = Plan.model_validate(data)
+        except (json.JSONDecodeError, ValueError) as e:
+            # 解析失败，创建默认计划
+            plan = Plan(
+                goal=task,
+                tasks=[Task(id="T1", description=task, dependencies=[], status="pending")],
+                status="pending"
+            )
 
-        return {"steps": steps}
+        return {"plan": plan}
 
     def build_graph(self) -> StateGraph:
         """构建状态图"""
         graph = StateGraph(PlanAgentState)
 
         # 添加节点
-        graph.add_node("analyze", self._analyze_node)
         graph.add_node("plan", self._plan_node)
-        graph.add_node("breakdown", self._breakdown_node)
 
         # 添加边
-        graph.add_edge(START, "analyze")
-        graph.add_edge("analyze", "plan")
-        graph.add_edge("plan", "breakdown")
-        graph.add_edge("breakdown", END)
+        graph.add_edge(START, "plan")
+        graph.add_edge("plan", END)
 
         return graph
 
-    def run(self, task: str, thread_id: str = "default") -> dict:
+    def run(self, task: str, thread_id: str = "default") -> Plan:
         """运行 Plan Agent
 
         Args:
@@ -194,14 +132,11 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
             thread_id: 会话 ID
 
         Returns:
-            包含 analysis, plan, steps 的结果
+            Plan 对象
         """
         input_data = {
             "task": task,
-            "analysis": None,
-            "context": [],
             "plan": None,
-            "steps": None,
         }
         result = super().run(input_data, thread_id)
-        return result
+        return result.get("plan")
