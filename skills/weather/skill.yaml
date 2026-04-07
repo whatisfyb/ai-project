@@ -1,0 +1,14 @@
+name: weather
+description: 获取指定城市的天气信息
+version: "1.0.0"
+author: user
+parameters:
+  - name: city
+    type: string
+    description: 城市名称
+    required: true
+  - name: days
+    type: integer
+    description: 预报天数
+    required: false
+    default: 1

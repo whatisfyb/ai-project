@@ -1,0 +1,14 @@
+name: search
+description: 搜索网页获取信息
+version: "1.0.0"
+author: user
+parameters:
+  - name: query
+    type: string
+    description: 搜索关键词
+    required: true
+  - name: max_results
+    type: integer
+    description: 最大返回结果数
+    required: false
+    default: 5
