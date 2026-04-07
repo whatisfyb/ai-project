@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 import yaml
+from langchain_core.tools import tool
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -156,7 +157,7 @@ def _load_single_skill(skill_path: Path) -> dict[str, Any] | None:
         return None
 
 
-def list_skills() -> list[dict[str, Any]]:
+def _list_skills_raw() -> list[dict[str, Any]]:
     """列出所有可用的 skills（仅返回元数据，不加载代码）
 
     Returns:
@@ -193,7 +194,7 @@ def list_skills() -> list[dict[str, Any]]:
     return available_skills
 
 
-def load_skills(
+def _load_skills_raw(
     names: list[str] | None = None,
     cache: bool = True,
 ) -> dict[str, dict[str, Any]]:
@@ -272,8 +273,38 @@ def get_skill(name: str, cache: bool = True) -> dict[str, Any] | None:
     Returns:
         skill 字典，不存在返回 None
     """
-    skills = load_skills(names=[name], cache=cache)
+    skills = _load_skills_raw(names=[name], cache=cache)
     return skills.get(name)
+
+
+@tool
+def list_skills() -> list[dict[str, Any]]:
+    """列出所有可用技能，供LLM查看和选择需要加载哪些技能。"""
+    return _list_skills_raw()
+
+
+@tool
+def load_skills(names: list[str]) -> dict[str, Any]:
+    """加载指定的技能到当前上下文，使LLM可以调用这些技能。
+
+    Args:
+        names: 要加载的技能名称列表
+    """
+    # 调用原始加载函数，禁用缓存以确保重新加载
+    loaded = _load_skills_raw(names=names, cache=False)
+    # 返回简化信息（不包含函数引用）
+    result = {}
+    for name, skill in loaded.items():
+        result[name] = {
+            "name": skill["name"],
+            "description": skill["description"],
+            "version": skill["version"],
+            "author": skill["author"],
+            "parameters": skill["parameters"],
+            "prompt_length": len(skill["prompt"]),
+            "loaded": True
+        }
+    return result
 
 
 if __name__ == "__main__":
@@ -281,12 +312,12 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
 
     print("=== 列出可用 Skills ===")
-    available = list_skills()
+    available = _list_skills_raw()
     for s in available:
         print(f"  - {s['name']}: {s['description']}")
 
     print("\n=== 加载所有 Skills ===")
-    skills = load_skills(cache=False)
+    skills = _load_skills_raw(cache=False)
     for name, skill in skills.items():
         print(f"  - {name}: {skill['description']}")
         print(f"    version: {skill['version']}")

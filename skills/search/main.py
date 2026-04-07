@@ -32,10 +32,10 @@ def run(query: str, max_results: int = 5, **kwargs) -> dict[str, Any]:
 
     try:
         # 调用 Tavily 搜索
-        result = tavily_search(
-            query=query,
-            max_results=max_results,
-        )
+        result = tavily_search.invoke({
+            "query": query,
+            "max_results": max_results,
+        })
 
         return {
             "success": True,
