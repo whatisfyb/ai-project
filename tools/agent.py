@@ -3,17 +3,22 @@
 使用 @tool 装饰器封装，提供统一的子代理调用接口。
 """
 
-from typing import Any, Literal
+from typing import Any, Literal, TYPE_CHECKING
 from langchain_core.tools import tool
 
-from agent.subagents import PlanAgent, ResearchAgent, AnalysisAgent
+# 延迟导入避免循环依赖
+if TYPE_CHECKING:
+    from agent.subagents import PlanAgent, ResearchAgent, AnalysisAgent
 
-# 子代理类型映射
-_SUBAGENT_CLASSES = {
-    "Plan": PlanAgent,
-    "Research": ResearchAgent,
-    "Analysis": AnalysisAgent,
-}
+
+def _get_subagent_classes():
+    """延迟加载子代理类，避免循环导入"""
+    from agent.subagents import PlanAgent, ResearchAgent, AnalysisAgent
+    return {
+        "Plan": PlanAgent,
+        "Research": ResearchAgent,
+        "Analysis": AnalysisAgent,
+    }
 
 _SUBAGENT_DESCRIPTIONS = {
     "Plan": "规划代理，用于分析复杂需求并拆解为可执行的子任务",
@@ -29,13 +34,15 @@ def _get_subagent_description(subagent_type: str) -> str:
 
 def _run_subagent(subagent_type: str, prompt: str) -> dict[str, Any]:
     """运行子代理的内部实现"""
-    if subagent_type not in _SUBAGENT_CLASSES:
+    subagent_classes = _get_subagent_classes()
+
+    if subagent_type not in subagent_classes:
         return {
             "status": "error",
             "error": f"未知的子代理类型: {subagent_type}",
         }
 
-    agent_class = _SUBAGENT_CLASSES[subagent_type]
+    agent_class = subagent_classes[subagent_type]
     agent = agent_class()
 
     # 根据代理类型传递正确的参数

@@ -10,7 +10,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from utils.llm import get_llm_model
 
 
-StateT = TypeVar("StateT", bound=TypedDict)
+# 使用 dict 作为 bound，TypedDict 是 dict 的子类型
+StateT = TypeVar("StateT", bound=dict)
 
 
 class BaseSubagent(ABC, Generic[StateT]):
