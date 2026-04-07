@@ -48,6 +48,7 @@ class PlanStore:
                     thread_id TEXT NOT NULL,
                     goal TEXT NOT NULL,
                     status TEXT NOT NULL,
+                    summarized_result TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 )
@@ -61,6 +62,7 @@ class PlanStore:
                     dependencies TEXT NOT NULL,
                     status TEXT NOT NULL,
                     result TEXT,
+                    claimed_by TEXT,
                     PRIMARY KEY (task_id, plan_id),
                     FOREIGN KEY (plan_id) REFERENCES plans(plan_id)
                 )
@@ -86,20 +88,20 @@ class PlanStore:
             # 保存 Plan
             conn.execute(
                 """
-                INSERT OR REPLACE INTO plans (plan_id, thread_id, goal, status, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT OR REPLACE INTO plans (plan_id, thread_id, goal, status, summarized_result, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (plan_id, thread_id, plan.goal, plan.status, now, now)
+                (plan_id, thread_id, plan.goal, plan.status, plan.summarized_result, now, now)
             )
 
             # 保存 Tasks
             for task in plan.tasks:
                 conn.execute(
                     """
-                    INSERT OR REPLACE INTO tasks (task_id, plan_id, description, dependencies, status, result)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    INSERT OR REPLACE INTO tasks (task_id, plan_id, description, dependencies, status, result, claimed_by)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (task.id, plan_id, task.description, json.dumps(task.dependencies), task.status, task.result)
+                    (task.id, plan_id, task.description, json.dumps(task.dependencies), task.status, task.result, task.claimed_by)
                 )
 
             conn.commit()
@@ -118,32 +120,33 @@ class PlanStore:
         with sqlite3.connect(self.db_path) as conn:
             # 查询 Plan
             cursor = conn.execute(
-                "SELECT goal, status FROM plans WHERE plan_id = ?",
+                "SELECT goal, status, summarized_result FROM plans WHERE plan_id = ?",
                 (plan_id,)
             )
             row = cursor.fetchone()
             if not row:
                 return None
 
-            goal, status = row
+            goal, status, summarized_result = row
 
             # 查询 Tasks
             cursor = conn.execute(
-                "SELECT task_id, description, dependencies, status, result FROM tasks WHERE plan_id = ?",
+                "SELECT task_id, description, dependencies, status, result, claimed_by FROM tasks WHERE plan_id = ?",
                 (plan_id,)
             )
             tasks = []
             for task_row in cursor.fetchall():
-                task_id, description, dependencies, task_status, result = task_row
+                task_id, description, dependencies, task_status, result, claimed_by = task_row
                 tasks.append(Task(
                     id=task_id,
                     description=description,
                     dependencies=json.loads(dependencies),
                     status=task_status,
-                    result=result
+                    result=result,
+                    claimed_by=claimed_by
                 ))
 
-            return Plan(goal=goal, tasks=tasks, status=status)
+            return Plan(goal=goal, tasks=tasks, status=status, summarized_result=summarized_result)
 
     def update_task_status(
         self,
@@ -303,3 +306,132 @@ class PlanStore:
             conn.commit()
 
         return True
+
+    # ============ Worker 分布式方法 ============
+
+    def claim_task(self, plan_id: str, worker_id: str) -> Task | None:
+        """原子领取任务
+
+        找到一个可执行的未领取任务，原子地标记为已领取
+
+        Args:
+            plan_id: Plan ID
+            worker_id: Worker 标识
+
+        Returns:
+            领取到的 Task，无可用任务返回 None
+        """
+        # 获取可执行的任务（依赖已满足 + pending）
+        pending_tasks = self.get_pending_tasks(plan_id)
+
+        if not pending_tasks:
+            return None
+
+        with sqlite3.connect(self.db_path) as conn:
+            # 尝试领取第一个未被领取的任务
+            for task in pending_tasks:
+                # 原子检查并更新
+                cursor = conn.execute(
+                    """
+                    UPDATE tasks SET claimed_by = ?
+                    WHERE task_id = ? AND plan_id = ? AND claimed_by IS NULL
+                    """,
+                    (worker_id, task.id, plan_id)
+                )
+                if cursor.rowcount > 0:
+                    conn.commit()
+                    # 返回领取到的任务
+                    task.claimed_by = worker_id
+                    return task
+
+            conn.commit()
+
+        return None
+
+    def release_task(self, plan_id: str, task_id: str) -> bool:
+        """释放任务（用于失败重试）
+
+        Args:
+            plan_id: Plan ID
+            task_id: Task ID
+
+        Returns:
+            是否成功
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE tasks SET claimed_by = NULL WHERE task_id = ? AND plan_id = ?",
+                (task_id, plan_id)
+            )
+            conn.commit()
+
+        return True
+
+    def check_all_completed(self, plan_id: str) -> bool:
+        """检查所有任务是否完成
+
+        Args:
+            plan_id: Plan ID
+
+        Returns:
+            是否全部完成
+        """
+        plan = self.load_plan(plan_id)
+        if not plan:
+            return False
+
+        return all(t.status == "completed" for t in plan.tasks)
+
+    def check_all_done(self, plan_id: str) -> bool:
+        """检查所有任务是否结束（完成或失败）
+
+        Args:
+            plan_id: Plan ID
+
+        Returns:
+            是否全部结束
+        """
+        plan = self.load_plan(plan_id)
+        if not plan:
+            return False
+
+        return all(t.status in ("completed", "failed") for t in plan.tasks)
+
+    def save_summarized_result(self, plan_id: str, result: str) -> bool:
+        """保存汇总结果
+
+        Args:
+            plan_id: Plan ID
+            result: 汇总结果
+
+        Returns:
+            是否成功
+        """
+        now = datetime.now().isoformat()
+
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                "UPDATE plans SET summarized_result = ?, status = 'completed', updated_at = ? WHERE plan_id = ?",
+                (result, now, plan_id)
+            )
+            conn.commit()
+
+        return True
+
+    def get_all_task_results(self, plan_id: str) -> list[dict]:
+        """获取所有任务结果
+
+        Args:
+            plan_id: Plan ID
+
+        Returns:
+            任务结果列表
+        """
+        plan = self.load_plan(plan_id)
+        if not plan:
+            return []
+
+        return [
+            {"id": t.id, "description": t.description, "result": t.result, "status": t.status}
+            for t in plan.tasks
+        ]

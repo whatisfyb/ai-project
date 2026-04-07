@@ -14,6 +14,7 @@ class Task(BaseModel):
         default="pending", description="任务状态"
     )
     result: str | None = Field(default=None, description="任务执行结果")
+    claimed_by: str | None = Field(default=None, description="领取该任务的 Worker ID")
 
 
 class Plan(BaseModel):
@@ -23,3 +24,4 @@ class Plan(BaseModel):
     status: Literal["pending", "completed", "failed"] = Field(
         default="pending", description="计划状态"
     )
+    summarized_result: str | None = Field(default=None, description="最终汇总结果")

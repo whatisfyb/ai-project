@@ -182,6 +182,75 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
         """
         return self.store.update_task_status(plan_id, task_id, "failed", result)
 
+    def claim_task(self, plan_id: str, worker_id: str) -> Task | None:
+        """原子领取任务
+
+        Args:
+            plan_id: Plan ID
+            worker_id: Worker 标识
+
+        Returns:
+            领取到的 Task，无可用任务返回 None
+        """
+        return self.store.claim_task(plan_id, worker_id)
+
+    def release_task(self, plan_id: str, task_id: str) -> bool:
+        """释放任务（用于失败重试）
+
+        Args:
+            plan_id: Plan ID
+            task_id: Task ID
+
+        Returns:
+            是否成功
+        """
+        return self.store.release_task(plan_id, task_id)
+
+    def check_all_completed(self, plan_id: str) -> bool:
+        """检查所有任务是否完成
+
+        Args:
+            plan_id: Plan ID
+
+        Returns:
+            是否全部完成
+        """
+        return self.store.check_all_completed(plan_id)
+
+    def check_all_done(self, plan_id: str) -> bool:
+        """检查所有任务是否结束（完成或失败）
+
+        Args:
+            plan_id: Plan ID
+
+        Returns:
+            是否全部结束
+        """
+        return self.store.check_all_done(plan_id)
+
+    def save_summarized_result(self, plan_id: str, result: str) -> bool:
+        """保存汇总结果
+
+        Args:
+            plan_id: Plan ID
+            result: 汇总结果
+
+        Returns:
+            是否成功
+        """
+        return self.store.save_summarized_result(plan_id, result)
+
+    def get_all_task_results(self, plan_id: str) -> list[dict]:
+        """获取所有任务结果
+
+        Args:
+            plan_id: Plan ID
+
+        Returns:
+            任务结果列表
+        """
+        return self.store.get_all_task_results(plan_id)
+
     def list_plans(
         self,
         status: Literal["pending", "completed", "failed"] | None = None
