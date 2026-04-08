@@ -4,10 +4,10 @@
 # LLM 模型配置
 llm:
   models:
-    - name: qwen
-      model: qwen/qwen3.6-plus:free
-      api_key: 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
-      base_url: https://openrouter.ai/api/v1
+    - name: MiniMax
+      model: MiniMax-M2.7
+      api_key: sk-cp-miGuvpkQ-EoNlx26XrSsZ_MT5Lk33pVdRuPe4DGr3ahVXe17As7SG87d3oJkGD4tOt-IyVBrk94AtQZ4D_9qUr_uu_swMqh8jK9gpai8dLinL0X2ey2slKM
+      base_url: https://api.minimaxi.com/v1
       temperature: 0.7
       timeout: 120
 

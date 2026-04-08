@@ -24,6 +24,7 @@ _SUBAGENT_DESCRIPTIONS = {
     "Plan": "规划代理，用于分析复杂需求并拆解为可执行的子任务",
     "Research": "研究代理，用于搜索信息、下载论文、使用RAG知识库",
     "Analysis": "分析代理，用于数据分析、报告生成、可视化建议",
+    "ExecutePlan": "执行代理，用于执行复杂的多步骤任务（自动拆解并并行执行）",
 }
 
 
@@ -35,6 +36,10 @@ def _get_subagent_description(subagent_type: str) -> str:
 def _run_subagent(subagent_type: str, prompt: str) -> dict[str, Any]:
     """运行子代理的内部实现"""
     subagent_classes = _get_subagent_classes()
+
+    if subagent_type == "ExecutePlan":
+        # 特殊处理：执行计划
+        return _run_execute_plan(prompt)
 
     if subagent_type not in subagent_classes:
         return {
@@ -55,6 +60,43 @@ def _run_subagent(subagent_type: str, prompt: str) -> dict[str, Any]:
     return result
 
 
+def _run_execute_plan(prompt: str) -> dict[str, Any]:
+    """执行复杂任务：生成计划 → 执行 → 汇总
+
+    Args:
+        prompt: 任务描述
+
+    Returns:
+        执行结果
+    """
+    from agent.subagents import PlanAgent
+    from agent.executor import PlanExecutor, execute_task_with_llm
+
+    # 1. 生成计划
+    plan_agent = PlanAgent()
+    plan, plan_id = plan_agent.run(task=prompt)
+
+    # 2. 执行计划
+    executor = PlanExecutor(
+        plan_id=plan_id,
+        memory=[{"role": "user", "content": prompt}],
+        execute_fn=execute_task_with_llm,
+        num_workers=2,
+    )
+    result = executor.run()
+
+    # 3. 返回结果
+    return {
+        "plan_id": plan_id,
+        "goal": result["goal"],
+        "completed": result["completed"],
+        "failed": result["failed"],
+        "total": result["total"],
+        "summarized_result": result.get("summarized_result"),
+        "tasks": result["tasks"],
+    }
+
+
 def _generate_summary(subagent_type: str, result: dict) -> str:
     """生成结果摘要"""
     if subagent_type == "Plan":
@@ -69,12 +111,17 @@ def _generate_summary(subagent_type: str, result: dict) -> str:
         if file_path:
             return f"分析完成，报告已保存到 {file_path}"
         return "分析完成"
+    elif subagent_type == "ExecutePlan":
+        completed = result.get("completed", 0)
+        failed = result.get("failed", 0)
+        total = result.get("total", 0)
+        return f"执行完成：{completed}/{total} 成功，{failed} 失败"
     return "任务完成"
 
 
 @tool
 def dispatch_agent(
-    subagent_type: Literal["Plan", "Research", "Analysis"],
+    subagent_type: Literal["Plan", "Research", "Analysis", "ExecutePlan"],
     prompt: str,
 ) -> dict[str, Any]:
     """Dispatch a task to a specialized subagent for execution.
@@ -83,9 +130,10 @@ def dispatch_agent(
     - Plan: For breaking down complex tasks into executable steps
     - Research: For searching information, downloading papers, using RAG knowledge base
     - Analysis: For data analysis, report generation, visualization suggestions
+    - ExecutePlan: For executing complex multi-step tasks (auto breaks down and runs in parallel)
 
     Args:
-        subagent_type: Type of subagent to use (Plan/Research/Analysis)
+        subagent_type: Type of subagent to use (Plan/Research/Analysis/ExecutePlan)
         prompt: Clear task description of what needs to be done
 
     Returns:

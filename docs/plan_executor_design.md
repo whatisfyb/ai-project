@@ -264,6 +264,33 @@ def claim_task(plan_id, worker_id) -> Task | None:
 - 事务支持，保证原子操作
 - 文件存储，便于持久化
 
+### 8. 用户中断处理
+
+- **触发方式**：用户按 Ctrl+C（SIGINT）
+- **处理流程**：
+  1. 捕获 SIGINT 信号
+  2. 设置全局中断标志
+  3. Worker 检测到中断，释放已领取的任务
+  4. 关闭线程池，退出执行
+  5. 恢复原始信号处理器
+
+- **状态保留**：已完成的任务结果保留在数据库，可后续恢复
+
+```python
+# 中断相关函数
+from agent.worker import set_interrupt, clear_interrupt, is_interrupted
+
+# 设置中断（通常由信号处理器自动调用）
+set_interrupt()
+
+# 检查是否被中断
+if is_interrupted():
+    # Worker 停止工作
+
+# 清除中断标志（执行前自动调用）
+clear_interrupt()
+```
+
 ## 进度显示
 
 ```
@@ -360,21 +387,21 @@ executor.cancel()  # 取消所有 Worker
 
 ## 待实现
 
-- [x] Task/Plan 数据模型
-- [x] PlanStore 持久化存储
-- [ ] TaskWorker 任务执行器（需更新：线程池、独立记忆）
-- [ ] PlanExecutor 协调器（需更新：线程池管理、取消支持）
-- [ ] 进度显示
-- [ ] 集成到 MainAgent
-- [ ] execute_fn 实现（如何执行具体任务）
-- [ ] 集成 Analysis Agent 汇总
-- [ ] 用户中断处理
+- [x] Task/Plan 数据模型 ✅ 已测试
+- [x] PlanStore 持久化存储 ✅ 已测试
+- [x] TaskWorker 任务执行器 ✅ 已测试
+- [x] PlanExecutor 协调器（线程池管理、取消支持）✅ 已测试
+- [x] 进度显示 ✅ 已测试
+- [x] 集成到 MainAgent ✅ 已测试
+- [x] execute_fn 实现 ✅ 已测试
+- [x] 集成汇总功能 ✅ 已测试
+- [x] 用户中断处理 ✅ 已测试
 
 ---
 
 ## 实现步骤
 
-### 步骤 1：更新 TaskWorker 类
+### 步骤 1：更新 TaskWorker 类 ✅ 完成
 
 **目标**：
 - TaskWorker 是专门的任务执行器（不是 MainAgent 副本）
@@ -408,7 +435,7 @@ assert store.load_plan(plan_id).tasks[0].result == "执行结果: 测试任务"
 
 ---
 
-### 步骤 2：更新 PlanExecutor
+### 步骤 2：更新 PlanExecutor ✅ 完成
 
 **目标**：
 - 线程池管理多个 TaskWorker
@@ -444,7 +471,7 @@ assert store.check_all_completed(plan_id)
 
 ---
 
-### 步骤 3：实现 execute_fn
+### 步骤 3：实现 execute_fn ✅ 完成
 
 **目标**：
 - 真实调用 LLM 执行任务
@@ -476,7 +503,7 @@ for task in store.load_plan(plan_id).tasks:
 
 ---
 
-### 步骤 4：集成 Analysis Agent
+### 步骤 4：集成 Analysis Agent ✅ 完成
 
 **目标**：
 - PlanExecutor 完成后调用 Analysis Agent 汇总
@@ -494,7 +521,7 @@ assert plan.status == "completed"
 
 ---
 
-### 步骤 5：集成到 MainAgent
+### 步骤 5：集成到 MainAgent ✅ 完成
 
 **目标**：
 - MainAgent 识别复杂任务
