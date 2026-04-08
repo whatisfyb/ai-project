@@ -26,7 +26,8 @@ MAIN_AGENT_PROMPT = """你是一个智能助手，能够理解用户需求并选
   - subagent_type="Plan": 用于复杂任务的拆解和规划
   - subagent_type="Research": 用于信息搜索、论文查找、知识库检索
   - subagent_type="Analysis": 用于数据分析、报告生成
-  - subagent_type="ExecutePlan": 用于执行复杂的多步骤任务（会自动拆解并并行执行）
+
+- `execute_plan` - 执行已有的计划（需要先通过 dispatch_agent 生成计划获得 plan_id）
 
 - `list_subagents` - 列出所有可用的子代理
 
@@ -36,7 +37,9 @@ MAIN_AGENT_PROMPT = """你是一个智能助手，能够理解用户需求并选
 2. **简单搜索**（"搜索XXX"）：使用 tavily_search
 3. **复杂研究**（"研究XXX领域"、"帮我调研XXX"）：使用 dispatch_agent，subagent_type="Research"
 4. **任务规划**（"帮我规划XXX"、"如何完成XXX"）：使用 dispatch_agent，subagent_type="Plan"
-5. **复杂任务执行**（"帮我写一个爬虫"、"帮我开发XXX"）：使用 dispatch_agent，subagent_type="ExecutePlan"
+5. **复杂任务执行**（"帮我写一个爬虫"、"帮我开发XXX"）：
+   - 先用 dispatch_agent，subagent_type="Plan" 生成计划，获取 plan_id
+   - 再用 execute_plan，plan_id=<上一步返回的plan_id> 执行计划
 6. **数据分析**（"分析XXX数据"、"生成报告"）：使用 dispatch_agent，subagent_type="Analysis"
 
 重要：对于简单问候和闲聊，直接回复用户，不要调用任何工具！
@@ -62,7 +65,7 @@ class MainAgent:
         """初始化工具"""
         from tools.tavily import tavily_search, tavily_extract
         from tools.arxiv_search import arxiv_search, arxiv_download_pdf
-        from tools.agent import dispatch_agent, list_subagents
+        from tools.agent import dispatch_agent, list_subagents, execute_plan
         from tools.skills_manager import load_skills, list_skills
 
         self.tools = [
@@ -71,6 +74,7 @@ class MainAgent:
             arxiv_search,
             arxiv_download_pdf,
             dispatch_agent,
+            execute_plan,
             list_subagents,
             load_skills,
             list_skills,
