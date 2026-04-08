@@ -56,12 +56,14 @@ class MainAgent:
         self.llm = get_llm_model()
         self._init_tools()
         self._graph = None
+        self._checkpointer = None
 
     def _init_tools(self):
         """初始化工具"""
         from tools.tavily import tavily_search, tavily_extract
         from tools.arxiv_search import arxiv_search, arxiv_download_pdf
         from tools.agent import dispatch_agent, list_subagents
+        from tools.skills_manager import load_skills, list_skills
 
         self.tools = [
             tavily_search,
@@ -70,6 +72,8 @@ class MainAgent:
             arxiv_download_pdf,
             dispatch_agent,
             list_subagents,
+            load_skills,
+            list_skills,
         ]
 
         # 绑定工具到 LLM
@@ -98,13 +102,20 @@ class MainAgent:
     def _route_decision(self, state: MainAgentState) -> str:
         """路由决策 - 决定下一步执行什么"""
         messages = state["messages"]
+        if not messages:
+            return "end"
+
         last_message = messages[-1]
 
-        # 如果 LLM 调用了工具，执行工具
-        if hasattr(last_message, "tool_calls") and last_message.tool_calls:
+        # 检查是否有工具调用（支持字典和消息对象）
+        if isinstance(last_message, dict):
+            has_tool_calls = "tool_calls" in last_message and last_message["tool_calls"]
+        else:
+            has_tool_calls = hasattr(last_message, "tool_calls") and last_message.tool_calls
+
+        if has_tool_calls:
             return "tools"
 
-        # 否则结束
         return "end"
 
     def build_graph(self) -> StateGraph:
@@ -136,8 +147,16 @@ class MainAgent:
         """获取编译后的图"""
         if self._graph is None:
             graph = self.build_graph()
-            self._graph = graph.compile()
+            self._graph = graph.compile(checkpointer=self.checkpointer)
         return self._graph
+
+    @property
+    def checkpointer(self):
+        """获取检查点存储（延迟初始化，共享实例）"""
+        if self._checkpointer is None:
+            from langgraph.checkpoint.memory import MemorySaver
+            self._checkpointer = MemorySaver()
+        return self._checkpointer
 
     def chat(self, message: str, thread_id: str = "default") -> dict[str, Any]:
         """与 Main Agent 对话
@@ -149,15 +168,20 @@ class MainAgent:
         Returns:
             响应结果
         """
-        from langgraph.checkpoint.memory import MemorySaver
+        from langchain_core.messages import HumanMessage
 
-        checkpointer = MemorySaver()
-        graph = self.build_graph().compile(checkpointer=checkpointer)
+        # 使用共享的图
+        graph = self.graph
 
+        # 从 checkpointer 获取历史消息
         config = {"configurable": {"thread_id": thread_id}}
+        existing_state = graph.get_state(config)
+        existing_messages = list(existing_state.values.get("messages", [])) if existing_state else []
+
+        # 追加新消息
         input_data = {
-            "messages": [],
-            "current_task": message,
+            "messages": existing_messages + [HumanMessage(content=message)],
+            "current_task": None,
             "memory_context": None,
             "subagent_results": {},
         }

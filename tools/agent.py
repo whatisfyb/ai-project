@@ -57,6 +57,13 @@ def _run_subagent(subagent_type: str, prompt: str) -> dict[str, Any]:
     else:  # Plan 和 Analysis 都用 task 参数
         result = agent.run(task=prompt)
 
+    # 统一转换为 dict 格式
+    if isinstance(result, tuple):
+        plan, plan_id = result
+        return {
+            "plan": plan,
+            "plan_id": plan_id,
+        }
     return result
 
 
@@ -100,8 +107,10 @@ def _run_execute_plan(prompt: str) -> dict[str, Any]:
 def _generate_summary(subagent_type: str, result: dict) -> str:
     """生成结果摘要"""
     if subagent_type == "Plan":
-        steps = result.get("steps", [])
-        return f"生成了 {len(steps)} 个执行步骤"
+        plan = result.get("plan")
+        if plan:
+            return f"生成了 {len(plan.tasks)} 个执行步骤"
+        return "生成了执行计划"
     elif subagent_type == "Research":
         search_count = len(result.get("search_results", []))
         paper_count = len(result.get("papers", []))
