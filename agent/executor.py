@@ -19,11 +19,6 @@ from agent.models import Task, Plan
 from agent.worker import TaskWorker, set_interrupt, clear_interrupt, is_interrupted
 
 
-class InterruptedException(Exception):
-    """用户中断异常"""
-    pass
-
-
 class ProgressTracker:
     """进度追踪与显示"""
 
@@ -94,6 +89,7 @@ class PlanExecutor:
         execute_fn: Callable[[Task, list], str],
         num_workers: int = 2,
         store: PlanStore | None = None,
+        interrupt_event: threading.Event | None = None,
     ):
         """初始化执行器
 
@@ -103,6 +99,7 @@ class PlanExecutor:
             execute_fn: 任务执行函数
             num_workers: Worker 数量
             store: PlanStore 实例
+            interrupt_event: 外部中断事件，用于从其他线程触发中断
         """
         self.plan_id = plan_id
         self.memory = memory
@@ -110,6 +107,7 @@ class PlanExecutor:
         self.num_workers = num_workers
         self.store = store or PlanStore()
         self.tracker = ProgressTracker(plan_id, self.store)
+        self.interrupt_event = interrupt_event
 
         # 线程池
         self.executor: ThreadPoolExecutor | None = None
@@ -117,19 +115,32 @@ class PlanExecutor:
         self._original_sigint_handler = None
 
     def _setup_interrupt_handler(self):
-        """设置中断处理器"""
+        """设置中断处理器（仅在主线程中有效，且没有外部 interrupt_event）"""
         def handle_interrupt(signum, frame):
             set_interrupt()  # 设置全局中断标志
+            # 如果有外部 interrupt_event，也设置它
+            if self.interrupt_event:
+                self.interrupt_event.set()
             console = Console()
             console.print("\n[yellow]收到中断信号，正在停止所有 Worker...[/yellow]")
 
-        self._original_sigint_handler = signal.signal(signal.SIGINT, handle_interrupt)
+        # 如果有外部 interrupt_event，优先使用它
+        # 否则设置 signal 处理（仅在主线程）
+        if self.interrupt_event is None and threading.current_thread() is threading.main_thread():
+            try:
+                self._original_sigint_handler = signal.signal(signal.SIGINT, handle_interrupt)
+            except (ValueError, OSError):
+                # 信号处理失败（非主线程或其他错误），跳过
+                self._original_sigint_handler = None
 
     def _restore_interrupt_handler(self):
         """恢复原始中断处理器"""
-        clear_interrupt()  # 清除中断标志
+        clear_interrupt()  # 清除全局中断标志
         if self._original_sigint_handler is not None:
-            signal.signal(signal.SIGINT, self._original_sigint_handler)
+            try:
+                signal.signal(signal.SIGINT, self._original_sigint_handler)
+            except (ValueError, OSError):
+                pass
             self._original_sigint_handler = None
 
     def run(self) -> dict:

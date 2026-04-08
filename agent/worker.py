@@ -1,7 +1,7 @@
 """TaskWorker - 任务执行器
 
 专门的任务执行器，不是 MainAgent 副本，不会 fork。
-支持中断检查。
+支持中断检查和工具调用。
 """
 
 import threading
@@ -10,6 +10,7 @@ from typing import Callable
 
 from agent.plan_store import PlanStore
 from agent.models import Task
+from utils.llm import get_llm_model
 
 # 全局中断标志
 _interrupt_event = threading.Event()
@@ -28,6 +29,23 @@ def clear_interrupt():
 def is_interrupted() -> bool:
     """检查是否被中断"""
     return _interrupt_event.is_set()
+
+
+def _get_worker_tools():
+    """获取 Worker 可用的工具列表（排除 skills_manager 和 agent）"""
+    from tools.tavily import tavily_search, tavily_extract
+    from tools.arxiv_search import arxiv_search, arxiv_download_pdf
+    from tools.firecrawl import firecrawl_scrape, firecrawl_crawl, firecrawl_map
+
+    return [
+        tavily_search,
+        tavily_extract,
+        arxiv_search,
+        arxiv_download_pdf,
+        firecrawl_scrape,
+        firecrawl_crawl,
+        firecrawl_map,
+    ]
 
 
 class TaskWorker:
@@ -118,6 +136,8 @@ class TaskWorker:
     def _execute_with_timeout(self, task: Task) -> str:
         """带超时执行任务
 
+        支持多轮工具调用，直到 LLM 返回文本响应。
+
         Args:
             task: 要执行的任务
 
@@ -132,22 +152,75 @@ class TaskWorker:
 
         def target():
             try:
+                # 初始化 LLM 和工具
+                llm = get_llm_model()
+                tools = _get_worker_tools()
+                llm_with_tools = llm.bind_tools(tools)
+
+                # 构建任务提示
+                task_prompt = f"""你是一个任务执行者。请完成以下任务：
+
+任务描述：{task.description}
+
+请直接执行任务并返回结果。如果需要搜索信息、获取数据等，可以使用工具辅助。
+使用中文回答。"""
+
                 # 将任务加入自己的记忆
                 self.memory.append({
                     "role": "user",
-                    "content": f"请执行以下任务：{task.description}"
+                    "content": task_prompt
                 })
 
-                # 执行
-                result = self.execute_fn(task, self.memory)
+                # 多轮工具调用循环
+                max_iterations = 10
+                for _ in range(max_iterations):
+                    # 调用 LLM
+                    response = llm_with_tools.invoke(self.memory)
 
-                # 将结果加入自己的记忆
-                self.memory.append({
-                    "role": "assistant",
-                    "content": result
-                })
+                    # 检查是否有工具调用
+                    if not hasattr(response, "tool_calls") or not response.tool_calls:
+                        # 没有工具调用，直接返回响应
+                        self.memory.append({"role": "assistant", "content": response.content})
+                        result_container["result"] = response.content
+                        return
 
-                result_container["result"] = result
+                    # 有工具调用，执行工具
+                    for tool_call in response.tool_calls:
+                        tool_name = tool_call["name"]
+                        tool_args = tool_call["args"]
+
+                        # 查找工具
+                        tool = next((t for t in tools if t.name == tool_name), None)
+                        if not tool:
+                            tool_result = f"错误：未找到工具 {tool_name}"
+                        else:
+                            try:
+                                tool_result = tool.invoke(tool_args)
+                                # 转换为字符串
+                                if isinstance(tool_result, dict):
+                                    import json
+                                    tool_result = json.dumps(tool_result, ensure_ascii=False, indent=2)
+                                elif not isinstance(tool_result, str):
+                                    tool_result = str(tool_result)
+                            except Exception as e:
+                                tool_result = f"工具执行错误: {str(e)}"
+
+                        # 添加工具调用和结果到记忆
+                        self.memory.append({
+                            "role": "assistant",
+                            "content": response.content if hasattr(response, "content") else "",
+                            "tool_calls": [tool_call],
+                        })
+                        self.memory.append({
+                            "role": "tool",
+                            "content": tool_result,
+                            "name": tool_name,
+                            "tool_call_id": tool_call.get("id"),
+                        })
+
+                # 达到最大迭代次数
+                result_container["result"] = "任务执行达到最大迭代次数，请稍后重试。"
+
             except Exception as e:
                 result_container["error"] = e
 
