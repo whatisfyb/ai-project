@@ -8,7 +8,6 @@ import signal
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, Future
-from typing import Callable
 
 from rich.console import Console
 from rich.live import Live
@@ -85,8 +84,6 @@ class PlanExecutor:
     def __init__(
         self,
         plan_id: str,
-        memory: list,
-        execute_fn: Callable[[Task, list], str],
         num_workers: int = 2,
         store: PlanStore | None = None,
         interrupt_event: threading.Event | None = None,
@@ -95,15 +92,11 @@ class PlanExecutor:
 
         Args:
             plan_id: Plan ID
-            memory: Main Agent 的记忆（用于初始化 Worker）
-            execute_fn: 任务执行函数
             num_workers: Worker 数量
             store: PlanStore 实例
             interrupt_event: 外部中断事件，用于从其他线程触发中断
         """
         self.plan_id = plan_id
-        self.memory = memory
-        self.execute_fn = execute_fn
         self.num_workers = num_workers
         self.store = store or PlanStore()
         self.tracker = ProgressTracker(plan_id, self.store)
@@ -166,8 +159,6 @@ class PlanExecutor:
                 TaskWorker(
                     worker_id=f"worker_{i + 1}",
                     plan_id=self.plan_id,
-                    memory=self.memory,  # 会自动复制
-                    execute_fn=self.execute_fn,
                     store=self.store,
                 )
                 for i in range(self.num_workers)
@@ -284,39 +275,3 @@ class PlanExecutor:
         if not plan:
             return True
         return all(t.status in ("completed", "failed") for t in plan.tasks)
-
-
-# ============ 执行函数 ============
-
-def execute_task_with_llm(task: Task, memory: list) -> str:
-    """使用 LLM 执行任务
-
-    Args:
-        task: 要执行的任务
-        memory: Worker 的记忆（会被修改，追加新消息）
-
-    Returns:
-        任务执行结果
-    """
-    from utils.llm import get_llm_model
-
-    llm = get_llm_model()
-
-    # 构建提示
-    prompt = f"""你是一个任务执行者。请完成以下任务：
-
-任务描述：{task.description}
-
-请直接执行任务并返回结果。如果任务需要多个步骤，请一步步完成。
-使用中文回答。"""
-
-    # 添加到记忆
-    memory.append({"role": "user", "content": prompt})
-
-    # 调用 LLM
-    response = llm.invoke(memory)
-
-    # 添加响应到记忆
-    memory.append({"role": "assistant", "content": response.content})
-
-    return response.content

@@ -72,7 +72,7 @@ def _run_plan_execute(plan_id: str) -> dict[str, Any]:
         执行结果
     """
     from agent.plan_store import PlanStore
-    from agent.executor import PlanExecutor, execute_task_with_llm
+    from agent.executor import PlanExecutor
 
     # 从 store 加载已有计划
     store = PlanStore()
@@ -87,8 +87,6 @@ def _run_plan_execute(plan_id: str) -> dict[str, Any]:
     # 执行计划
     executor = PlanExecutor(
         plan_id=plan_id,
-        memory=[{"role": "user", "content": plan.goal}],
-        execute_fn=execute_task_with_llm,
         num_workers=2,
     )
     result = executor.run()

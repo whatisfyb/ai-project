@@ -6,7 +6,6 @@
 
 import threading
 import time
-from typing import Callable
 
 from agent.plan_store import PlanStore
 from agent.models import Task
@@ -61,8 +60,6 @@ class TaskWorker:
         self,
         worker_id: str,
         plan_id: str,
-        memory: list,
-        execute_fn: Callable[[Task, list], str],
         store: PlanStore | None = None,
         timeout: int = 300,
     ):
@@ -71,15 +68,11 @@ class TaskWorker:
         Args:
             worker_id: Worker 标识
             plan_id: Plan ID
-            memory: 初始化记忆（复制后独立维护）
-            execute_fn: 任务执行函数 (task, memory) -> result
             store: PlanStore 实例
             timeout: 单任务超时时间（秒）
         """
         self.worker_id = worker_id
         self.plan_id = plan_id
-        self.memory = memory.copy()  # 复制，独立维护
-        self.execute_fn = execute_fn
         self.store = store or PlanStore()
         self.timeout = timeout
 
@@ -165,22 +158,21 @@ class TaskWorker:
 请直接执行任务并返回结果。如果需要搜索信息、获取数据等，可以使用工具辅助。
 使用中文回答。"""
 
-                # 将任务加入自己的记忆
-                self.memory.append({
-                    "role": "user",
-                    "content": task_prompt
-                })
+                # 使用本地消息列表（不跨任务共享）
+                messages = [
+                    {"role": "user", "content": task_prompt}
+                ]
 
                 # 多轮工具调用循环
                 max_iterations = 10
                 for _ in range(max_iterations):
                     # 调用 LLM
-                    response = llm_with_tools.invoke(self.memory)
+                    response = llm_with_tools.invoke(messages)
 
                     # 检查是否有工具调用
                     if not hasattr(response, "tool_calls") or not response.tool_calls:
                         # 没有工具调用，直接返回响应
-                        self.memory.append({"role": "assistant", "content": response.content})
+                        messages.append({"role": "assistant", "content": response.content})
                         result_container["result"] = response.content
                         return
 
@@ -205,13 +197,13 @@ class TaskWorker:
                             except Exception as e:
                                 tool_result = f"工具执行错误: {str(e)}"
 
-                        # 添加工具调用和结果到记忆
-                        self.memory.append({
+                        # 添加工具调用和结果到消息列表
+                        messages.append({
                             "role": "assistant",
                             "content": response.content if hasattr(response, "content") else "",
                             "tool_calls": [tool_call],
                         })
-                        self.memory.append({
+                        messages.append({
                             "role": "tool",
                             "content": tool_result,
                             "name": tool_name,
