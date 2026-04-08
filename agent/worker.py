@@ -6,6 +6,7 @@
 
 import threading
 import time
+from typing import Optional
 
 from agent.plan_store import PlanStore
 from agent.models import Task
@@ -54,6 +55,7 @@ class TaskWorker:
     完成后死亡，不进行总结。
 
     Worker 不是 MainAgent 副本，不会 fork 自己。
+    支持注册到 WorkerRegistry 以便 Supervisor 监控。
     """
 
     def __init__(
@@ -61,6 +63,7 @@ class TaskWorker:
         worker_id: str,
         plan_id: str,
         store: PlanStore | None = None,
+        registry=None,
         timeout: int = 300,
     ):
         """初始化 Worker
@@ -69,11 +72,13 @@ class TaskWorker:
             worker_id: Worker 标识
             plan_id: Plan ID
             store: PlanStore 实例
+            registry: WorkerRegistry 实例，用于注册自己
             timeout: 单任务超时时间（秒）
         """
         self.worker_id = worker_id
         self.plan_id = plan_id
         self.store = store or PlanStore()
+        self.registry = registry
         self.timeout = timeout
 
     def run(self) -> dict:
@@ -82,47 +87,60 @@ class TaskWorker:
         Returns:
             执行结果统计
         """
+        # 注册到 WorkerRegistry
+        if self.registry:
+            self.registry.register(self.worker_id, threading.current_thread())
+
         results = {"completed": 0, "failed": 0, "tasks": [], "interrupted": False}
 
-        while True:
-            # 检查中断
-            if is_interrupted():
-                results["interrupted"] = True
-                break
-
-            # 1. 原子领取任务
-            task = self.store.claim_task(self.plan_id, self.worker_id)
-
-            if not task:
-                # 没有可执行任务，死亡
-                break
-
-            # 2. 执行任务（带超时）
-            try:
-                result = self._execute_with_timeout(task)
-                self.store.update_task_status(
-                    self.plan_id, task.id, "completed", result
-                )
-                results["completed"] += 1
-                results["tasks"].append({"id": task.id, "status": "completed"})
-            except Exception as e:
-                # 检查是否是中断导致的
+        try:
+            while True:
+                # 检查中断
                 if is_interrupted():
-                    self.store.release_task(self.plan_id, task.id)
                     results["interrupted"] = True
                     break
 
-                error_msg = f"执行失败: {str(e)}"
-                self.store.update_task_status(
-                    self.plan_id, task.id, "failed", error_msg
-                )
-                self.store.release_task(self.plan_id, task.id)
-                results["failed"] += 1
-                results["tasks"].append({
-                    "id": task.id,
-                    "status": "failed",
-                    "error": str(e)
-                })
+                # 1. 原子领取任务
+                task = self.store.claim_task(self.plan_id, self.worker_id)
+
+                if not task:
+                    # 没有可执行任务，死亡
+                    break
+
+                # 2. 更新注册表中的任务信息
+                if self.registry:
+                    self.registry.update_task(self.worker_id, task.id)
+
+                # 3. 执行任务（带超时）
+                try:
+                    result = self._execute_with_timeout(task)
+                    self.store.update_task_status(
+                        self.plan_id, task.id, "completed", result
+                    )
+                    results["completed"] += 1
+                    results["tasks"].append({"id": task.id, "status": "completed"})
+                except Exception as e:
+                    # 检查是否是中断导致的
+                    if is_interrupted():
+                        self.store.release_task(self.plan_id, task.id)
+                        results["interrupted"] = True
+                        break
+
+                    error_msg = f"执行失败: {str(e)}"
+                    self.store.update_task_status(
+                        self.plan_id, task.id, "failed", error_msg
+                    )
+                    self.store.release_task(self.plan_id, task.id)
+                    results["failed"] += 1
+                    results["tasks"].append({
+                        "id": task.id,
+                        "status": "failed",
+                        "error": str(e)
+                    })
+        finally:
+            # 注销自己
+            if self.registry:
+                self.registry.deregister(self.worker_id)
 
         return results
 
