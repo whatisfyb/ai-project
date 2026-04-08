@@ -18,6 +18,7 @@ class PlanAgentState(TypedDict):
     task: str  # 原始任务
     plan: Plan | None  # 生成的计划
     plan_id: str | None  # 持久化 ID
+    thread_id: str  # 会话 ID
 
 
 class PlanAgent(BaseSubagent[PlanAgentState]):
@@ -50,7 +51,7 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
     def _plan_node(self, state: PlanAgentState) -> dict:
         """生成计划节点"""
         task = state["task"]
-        thread_id = state.get("thread_id", "default")
+        thread_id = state["thread_id"]
 
         # 获取 JSON schema 用于提示词
         schema = Plan.model_json_schema()
@@ -128,6 +129,7 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
             "task": task,
             "plan": None,
             "plan_id": None,
+            "thread_id": thread_id,
         }
         result = super().run(input_data, thread_id)
         return result.get("plan"), result.get("plan_id")
@@ -264,3 +266,11 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
             Plan 列表
         """
         return self.store.list_plans(status=status)
+    
+if __name__ == "__main__":
+    agent = PlanAgent()
+    plan, plan_id = agent.run("撰写一篇关于人工智能未来发展的文章")
+    print(f"生成的计划 ID: {plan_id}")
+    print("计划内容:")
+    for task in plan.tasks:
+        print(f"- {task.id}: {task.description} (依赖: {task.dependencies})")
