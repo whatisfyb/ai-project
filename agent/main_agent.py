@@ -1,6 +1,7 @@
 """Main Agent - 智能路由主代理"""
 
 import asyncio
+from contextvars import ContextVar
 from typing import Any
 
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, SystemMessage
@@ -9,6 +10,10 @@ from langgraph.prebuilt import ToolNode
 
 from utils.llm import get_llm_model
 from agent.state import MainAgentState
+
+
+# Context variable 用于在工具调用时传递 thread_id
+_current_thread_id: ContextVar[str] = ContextVar("current_thread_id", default="default")
 
 
 # 系统提示词
@@ -242,11 +247,23 @@ class MainAgent:
 
     @property
     def checkpointer(self):
-        """获取检查点存储（延迟初始化，共享实例）"""
+        """获取检查点存储（延迟初始化，共享实例）
+
+        注意：使用 MemorySaver 进行会话内的状态管理。
+        持久化通过 session_store 单独实现。
+        """
         if self._checkpointer is None:
             from langgraph.checkpoint.memory import MemorySaver
             self._checkpointer = MemorySaver()
         return self._checkpointer
+
+    @property
+    def session_store(self):
+        """获取会话存储（延迟初始化）"""
+        if not hasattr(self, '_session_store') or self._session_store is None:
+            from agent.session_store import SessionStore
+            self._session_store = SessionStore()
+        return self._session_store
 
     async def chat_async(self, message: str, thread_id: str = "default", on_token=None) -> dict[str, Any]:
         """与 Main Agent 对话（streaming 模式）
@@ -261,12 +278,32 @@ class MainAgent:
         """
         from langchain_core.messages import HumanMessage
 
+        # 设置当前 thread_id 到 context（供工具调用时使用）
+        _current_thread_id.set(thread_id)
+
         graph = self.graph
+
+        # 确保会话存在
+        self.session_store.get_or_create_session(thread_id)
+
+        # 保存用户消息
+        self.session_store.add_message(thread_id, "user", message)
 
         # 从 checkpointer 获取历史消息
         config = {"configurable": {"thread_id": thread_id}}
         existing_state = graph.get_state(config)
         existing_messages = list(existing_state.values.get("messages", [])) if existing_state else []
+
+        # 如果 LangGraph 没有历史（重启后），从 session_store 恢复
+        if not existing_messages:
+            history = self.session_store.get_messages(thread_id)
+            # 排除刚添加的用户消息
+            history = [h for h in history if h['role'] != 'user' or h['content'] != message]
+            for h in history:
+                if h['role'] == 'user':
+                    existing_messages.append(HumanMessage(content=h['content']))
+                else:
+                    existing_messages.append(AIMessage(content=h['content']))
 
         # 追加新消息
         input_data = {
@@ -292,6 +329,7 @@ class MainAgent:
                     # 被中断了，保存已收到的内容作为助手消息
                     if accumulated_response:
                         existing_messages.append(AIMessage(content=accumulated_response))
+                        self.session_store.add_message(thread_id, "assistant", accumulated_response)
                     existing_messages.append(
                         AIMessage(content="[系统消息] 用户中断了执行。")
                     )
@@ -312,6 +350,7 @@ class MainAgent:
             # 被取消，保存部分输出
             if accumulated_response:
                 existing_messages.append(AIMessage(content=accumulated_response))
+                self.session_store.add_message(thread_id, "assistant", accumulated_response)
             existing_messages.append(
                 AIMessage(content="[系统消息] 用户中断了执行。")
             )
@@ -320,6 +359,7 @@ class MainAgent:
         # 正常结束，保存最终响应
         if accumulated_response:
             existing_messages.append(AIMessage(content=accumulated_response))
+            self.session_store.add_message(thread_id, "assistant", accumulated_response)
 
         return {"messages": existing_messages}
 
@@ -395,20 +435,26 @@ async def _run_repl_async():
     from rich.console import Console
     from rich.markdown import Markdown
     from rich.panel import Panel
+    from rich.table import Table
     from agent.registry import agent_registry, terminate
     from agent.worker import is_interrupted, clear_interrupt
+    from agent.session_store import SessionStore
 
     console = Console()
     agent = create_main_agent()
+    session_store = SessionStore()
 
     console.print(Panel.fit(
         "[bold green]Main Agent 已启动[/bold green]\n"
         "输入消息与 Agent 对话\n\n"
         "[dim]命令：[/dim]\n"
-        "  [cyan]/exit[/cyan]  - 退出\n"
-        "  [cyan]/clear[/cyan]  - 重置会话\n"
-        "  [cyan]/status[/cyan]  - 查看状态\n"
-        "  [cyan]Ctrl+C[/cyan]   - 终止当前任务",
+        "  [cyan]/exit[/cyan]      - 退出\n"
+        "  [cyan]/clear[/cyan]     - 重置会话\n"
+        "  [cyan]/status[/cyan]    - 查看状态\n"
+        "  [cyan]/sessions[/cyan]  - 列出所有会话\n"
+        "  [cyan]/resume <id>[/cyan] - 切换到指定会话\n"
+        "  [cyan]/history[/cyan]   - 查看当前会话历史\n"
+        "  [cyan]Ctrl+C[/cyan]     - 终止当前任务",
         title="Main Agent"
     ))
 
@@ -428,10 +474,14 @@ async def _run_repl_async():
                 console.print("[dim]已取消输入[/dim]\n")
             continue
 
+        # 显示当前会话
+        current_session = session_store.get_session(thread_id)
+        session_title = current_session.get("title", thread_id) if current_session else thread_id
+
         # 异步等待用户输入（使用 asyncio.to_thread 避免阻塞事件循环）
         try:
             user_input = await asyncio.to_thread(
-                lambda: console.input("[bold blue]You:[/bold blue] ").strip()
+                lambda: console.input(f"[bold blue]You[/bold blue] [dim]({session_title})[/dim]: ").strip()
             )
         except (KeyboardInterrupt, EOFError):
             # Ctrl+C 或 Ctrl+D 在等待输入时
@@ -444,22 +494,114 @@ async def _run_repl_async():
         if not user_input:
             continue
 
-        if user_input.lower() == "/exit":
+        # 处理命令
+        cmd_lower = user_input.lower()
+
+        if cmd_lower == "/exit":
             console.print("[bold yellow]再见！[/bold yellow]")
             break
 
-        if user_input.lower() == "/clear":
+        if cmd_lower == "/clear":
             thread_id = f"session_{int(__import__('time').time())}"
             console.print("[bold green]会话已重置[/bold green]\n")
             continue
 
-        if user_input.lower() == "/status":
+        if cmd_lower == "/status":
             running = agent_registry.is_running()
             plan_ids = agent_registry.get_running_plan_ids()
             if running:
                 console.print(f"[cyan]正在运行的任务: {plan_ids}[/cyan]\n")
             else:
                 console.print("[dim]没有正在运行的任务[/dim]\n")
+            continue
+
+        if cmd_lower == "/sessions":
+            sessions = session_store.list_sessions(limit=20)
+            if not sessions:
+                console.print("[dim]没有历史会话[/dim]\n")
+                continue
+
+            table = Table(title="历史会话")
+            table.add_column("ID", style="cyan")
+            table.add_column("标题")
+            table.add_column("消息数", justify="right")
+            table.add_column("更新时间")
+
+            for s in sessions:
+                # 格式化时间
+                try:
+                    dt = __import__('datetime').datetime.fromisoformat(s['updated_at'])
+                    time_str = dt.strftime('%m-%d %H:%M')
+                except:
+                    time_str = s['updated_at'][:16]
+
+                # 标记当前会话
+                is_current = " [green]*[/green]" if s['session_id'] == thread_id else ""
+                table.add_row(
+                    s['session_id'] + is_current,
+                    s['title'][:30],
+                    str(s['message_count']),
+                    time_str
+                )
+
+            console.print(table)
+            console.print("[dim]使用 /resume <session_id> 切换会话[/dim]\n")
+            continue
+
+        if cmd_lower.startswith("/resume"):
+            parts = user_input.split(maxsplit=1)
+            if len(parts) < 2:
+                console.print("[red]用法: /resume <session_id>[/red]\n")
+                continue
+
+            new_session_id = parts[1].strip()
+            session = session_store.get_session(new_session_id)
+            if not session:
+                console.print(f"[red]会话不存在: {new_session_id}[/red]\n")
+                continue
+
+            thread_id = new_session_id
+
+            # 回放历史对话
+            messages = session_store.get_messages(thread_id)
+            if messages:
+                console.print(f"\n[bold green]已切换到会话: {session['title']}[/bold green]")
+                console.print(f"[dim]历史消息 ({len(messages)} 条):[/dim]\n")
+
+                for msg in messages:
+                    role = "用户" if msg['role'] == 'user' else "助手"
+                    role_color = "blue" if msg['role'] == 'user' else "green"
+                    content = msg['content'] or ""
+                    # 截断显示
+                    if len(content) > 300:
+                        content = content[:300] + "..."
+
+                    console.print(f"[{role_color}]{role}[/{role_color}]: {content}\n")
+            else:
+                console.print(f"[bold green]已切换到会话: {session['title']}[/bold green] (无历史消息)\n")
+            continue
+
+        if cmd_lower == "/history":
+            messages = session_store.get_messages(thread_id)
+            if not messages:
+                console.print("[dim]当前会话没有历史消息[/dim]\n")
+                continue
+
+            console.print(f"\n[bold]当前会话历史 ({len(messages)} 条消息):[/bold]\n")
+
+            for msg in messages:
+                role = "用户" if msg['role'] == 'user' else "助手"
+                role_color = "blue" if msg['role'] == 'user' else "green"
+                content = msg['content'] or ""
+
+                # 时间
+                try:
+                    dt = __import__('datetime').datetime.fromisoformat(msg['timestamp'])
+                    time_str = dt.strftime('%H:%M')
+                except:
+                    time_str = ""
+
+                console.print(f"[dim][{time_str}][/dim] [{role_color}]{role}[/{role_color}]: {content}\n")
             continue
 
         # 调用 Agent（async streaming 模式）

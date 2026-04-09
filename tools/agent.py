@@ -32,6 +32,12 @@ def _get_subagent_description(subagent_type: str) -> str:
     return _SUBAGENT_DESCRIPTIONS.get(subagent_type, "未知代理类型")
 
 
+def _get_current_thread_id() -> str:
+    """获取当前 thread_id（从 context variable）"""
+    from agent.main_agent import _current_thread_id
+    return _current_thread_id.get()
+
+
 def _run_subagent(subagent_type: str, prompt: str) -> dict[str, Any]:
     """运行子代理的内部实现"""
     subagent_classes = _get_subagent_classes()
@@ -42,15 +48,18 @@ def _run_subagent(subagent_type: str, prompt: str) -> dict[str, Any]:
             "error": f"未知的子代理类型: {subagent_type}",
         }
 
+    # 获取当前会话的 thread_id
+    thread_id = _get_current_thread_id()
+
     agent_class = subagent_classes[subagent_type]
     agent = agent_class()
 
     # 根据代理类型传递正确的参数
-    # PlanAgent.run(task=...), ResearchAgent.run(query=...), AnalysisAgent.run(task=...)
+    # 所有代理都接收 thread_id 参数
     if subagent_type == "Research":
-        result = agent.run(query=prompt)
+        result = agent.run(query=prompt, thread_id=thread_id)
     else:  # Plan 和 Analysis 都用 task 参数
-        result = agent.run(task=prompt)
+        result = agent.run(task=prompt, thread_id=thread_id)
 
     # 统一转换为 dict 格式
     if isinstance(result, tuple):

@@ -32,6 +32,24 @@ def plan_get(plan_id: str) -> dict[str, Any]:
         Plan details including all tasks
     """
     store = PlanStore()
+
+    # 获取 plan 记录以获取 thread_id
+    from agent.plan_store import PlanRecord
+    import sqlite3
+    from datetime import datetime
+
+    # 直接查询获取 thread_id
+    db_path = store.db_path
+    thread_id = None
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.execute(
+            "SELECT thread_id FROM plans WHERE plan_id = ?",
+            (plan_id,)
+        )
+        row = cursor.fetchone()
+        if row:
+            thread_id = row[0]
+
     plan = store.load_plan(plan_id)
 
     if not plan:
@@ -54,6 +72,7 @@ def plan_get(plan_id: str) -> dict[str, Any]:
     return {
         "plan": {
             "plan_id": plan_id,
+            "thread_id": thread_id,
             "goal": plan.goal,
             "status": plan.status,
             "tasks": tasks_info,
@@ -97,6 +116,36 @@ def plan_execute(plan_id: str, timeout: int = 600) -> dict[str, Any]:
         return {
             "status": "error",
             "error": "Plan has no tasks to execute",
+        }
+
+    # 检查 plan 是否属于当前会话
+    import sqlite3
+    current_thread_id = None
+    plan_thread_id = None
+
+    try:
+        from agent.main_agent import _current_thread_id
+        current_thread_id = _current_thread_id.get()
+    except:
+        pass
+
+    # 获取 plan 的 thread_id
+    with sqlite3.connect(store.db_path) as conn:
+        cursor = conn.execute(
+            "SELECT thread_id FROM plans WHERE plan_id = ?",
+            (plan_id,)
+        )
+        row = cursor.fetchone()
+        if row:
+            plan_thread_id = row[0]
+
+    # 检查会话归属
+    if current_thread_id and plan_thread_id and current_thread_id != plan_thread_id:
+        return {
+            "status": "error",
+            "error": f"Plan {plan_id} 属于会话 {plan_thread_id}，当前会话是 {current_thread_id}。请在正确的会话中执行。",
+            "plan_thread_id": plan_thread_id,
+            "current_thread_id": current_thread_id,
         }
 
     pending_tasks = store.get_pending_tasks(plan_id)
