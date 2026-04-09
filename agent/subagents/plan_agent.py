@@ -1,8 +1,6 @@
 """Plan Agent - 复杂任务拆解"""
 
 import json
-import os
-import time
 from typing import Literal
 from typing_extensions import TypedDict
 
@@ -116,13 +114,6 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
                 json_str = content.strip()
 
             data = json.loads(json_str)
-            # Debug: 写入原始JSON到文件
-            debug_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "debug")
-            os.makedirs(debug_dir, exist_ok=True)
-            debug_file = os.path.join(debug_dir, f"plan_debug_{int(time.time() * 1000)}.json")
-            with open(debug_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-            print(f"[DEBUG] Plan写入: {debug_file}")
             plan = Plan.model_validate(data)
         except (json.JSONDecodeError, ValueError) as e:
             # 解析失败，创建默认计划
