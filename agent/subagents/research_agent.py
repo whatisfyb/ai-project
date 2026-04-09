@@ -8,8 +8,8 @@ from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END, START
 
 from agent.subagents.base import BaseSubagent
-from tools.tavily import tavily_search, tavily_extract
-from tools.arxiv_search import arxiv_search, arxiv_download_pdf
+from tools.web import web_search, web_fetch
+from tools.web import arxiv_search, arxiv_download_pdf
 
 
 class ResearchAgentState(TypedDict):
@@ -44,7 +44,7 @@ class ResearchAgent(BaseSubagent[ResearchAgentState]):
 
     @property
     def tools(self) -> list:
-        return [tavily_search, tavily_extract, arxiv_search, arxiv_download_pdf]
+        return [web_search, web_fetch, arxiv_search, arxiv_download_pdf]
 
     def _web_search_node(self, state: ResearchAgentState) -> dict:
         """网络搜索节点"""
@@ -76,7 +76,7 @@ KEYWORDS: 关键词1, 关键词2, 关键词3
             # 执行搜索
             for kw in keywords[:3]:
                 try:
-                    result = tavily_search.invoke({"query": kw, "max_results": 5})
+                    result = web_search.invoke({"query": kw, "max_results": 5})
                     if "error" not in result:
                         results.append({
                             "keyword": kw,

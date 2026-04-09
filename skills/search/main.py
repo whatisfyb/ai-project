@@ -9,7 +9,7 @@ project_root = Path(__file__).parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from tools.tavily import tavily_search
+from tools.web import web_search
 
 
 def run(query: str, max_results: int = 5, **kwargs) -> dict[str, Any]:

@@ -16,11 +16,32 @@ MAIN_AGENT_PROMPT = """你是一个智能助手，能够理解用户需求并选
 
 ## 可用工具
 
+### 文件操作工具
+- `read` - 读取文件内容（支持行偏移和限制，大文件自动截断）
+- `write` - 创建/覆盖文件
+- `append` - 追加内容到文件
+- `edit` - 精准编辑（搜索替换）
+- `edit_regex` - 正则表达式编辑
+
+### Shell 命令工具
+- `bash` - 执行 Shell 命令
+- `bash_script` - 执行多行脚本
+
+### 文件查找工具
+- `glob` - 查找匹配 glob 模式的文件（如 `**/*.py`）
+- `glob_list` - 多模式文件查找
+
 ### 搜索和信息工具
-- `tavily_search` - 网络搜索
-- `tavily_extract` - URL内容提取
-- `arxiv_search` - arXiv论文搜索
+- `web_search` - 网络搜索
+- `web_fetch` - 从URL提取内容
+- `web_scrape` - 抓取网页（Firecrawl，支持 markdown/html）
+- `web_crawl` - 爬取整个网站
+- `web_map` - 发现网站所有URL
+- `arxiv_search` - arXiv学术论文搜索
+- `arxiv_get_by_id` - 根据ID获取arXiv论文
 - `arxiv_download_pdf` - 下载arXiv论文PDF
+- `grep` - 在文件中搜索内容（基于 ripgrep，支持正则表达式、文件类型过滤）
+- `grep_count` - 统计匹配次数（比 grep 更快）
 
 ### 子代理分发工具
 - `dispatch_agent` - 分发任务给专门的子代理执行
@@ -28,9 +49,15 @@ MAIN_AGENT_PROMPT = """你是一个智能助手，能够理解用户需求并选
   - subagent_type="Research": 用于信息搜索、论文查找、知识库检索
   - subagent_type="Analysis": 用于数据分析、报告生成
 
-- `execute_plan` - 执行已有的计划（需要 plan_id）。如果之前的计划被中断，用户想继续时，用之前的 plan_id 调用此工具恢复执行。
-
 - `list_subagents` - 列出所有可用的子代理
+
+### Plan/Task 管理工具
+- `plan_get` - 获取指定计划的详细信息
+- `plan_execute` - 执行指定计划
+- `task_add` - 添加任务到计划
+- `task_update` - 更新任务（描述、依赖、状态）
+- `task_delete` - 删除任务
+- `task_get` - 获取任务详情
 
 ### Skills 技能工具
 - `list_skills` - 列出所有可用的 AI 技能（如天气查询等）
@@ -42,7 +69,7 @@ MAIN_AGENT_PROMPT = """你是一个智能助手，能够理解用户需求并选
 ## 决策规则
 
 1. **简单对话**（问候、闲聊）：直接回复，不要调用任何工具
-2. **简单搜索**（"搜索XXX"）：使用 tavily_search
+2. **简单搜索**（"搜索XXX"）：使用 web_search
 3. **复杂研究**（"研究XXX领域"、"帮我调研XXX"）：使用 dispatch_agent，subagent_type="Research"
 4. **任务规划**（"帮我规划XXX"、"如何完成XXX"）：使用 dispatch_agent，subagent_type="Plan"
 5. **复杂任务执行**（"帮我写一个爬虫"、"帮我开发XXX"）：
@@ -80,22 +107,63 @@ class MainAgent:
 
     def _init_tools(self):
         """初始化工具"""
-        from tools.tavily import tavily_search, tavily_extract
-        from tools.arxiv_search import arxiv_search, arxiv_download_pdf
-        from tools.agent import dispatch_agent, list_subagents, execute_plan
-        from tools.skills_manager import load_skills, list_skills, skill_call
+        from tools.web import (
+            web_search, web_fetch, web_scrape, web_crawl, web_map,
+            arxiv_search, arxiv_get_by_id, arxiv_download_pdf,
+        )
+        from tools.agent import dispatch_agent, list_subagents
+        from tools.skills import load_skills, list_skills, skill_call
+        from tools.task import (
+            plan_get, plan_execute,
+            task_add, task_update, task_delete, task_get,
+        )
+        from tools.grep import grep, grep_count
+        from tools.read import read
+        from tools.write import write, append
+        from tools.edit import edit, edit_regex
+        from tools.bash import bash, bash_script
+        from tools.glob import glob, glob_list
 
         self.tools = [
-            tavily_search,
-            tavily_extract,
+            # Web 搜索和内容提取
+            web_search,
+            web_fetch,
+            web_scrape,
+            web_crawl,
+            web_map,
+            # arXiv 学术搜索
             arxiv_search,
+            arxiv_get_by_id,
             arxiv_download_pdf,
+            # 子代理
             dispatch_agent,
-            execute_plan,
             list_subagents,
+            # Plan/Task 管理
+            plan_get,
+            plan_execute,
+            task_add,
+            task_update,
+            task_delete,
+            task_get,
+            # Skills
             load_skills,
             list_skills,
             skill_call,
+            # 文件搜索
+            grep,
+            grep_count,
+            # 文件操作
+            read,
+            write,
+            append,
+            edit,
+            edit_regex,
+            # Shell
+            bash,
+            bash_script,
+            # 文件查找
+            glob,
+            glob_list,
         ]
 
         # 绑定工具到 LLM

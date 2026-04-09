@@ -33,18 +33,18 @@ def is_interrupted() -> bool:
 
 def _get_worker_tools():
     """获取 Worker 可用的工具列表（排除 skills_manager 和 agent）"""
-    from tools.tavily import tavily_search, tavily_extract
-    from tools.arxiv_search import arxiv_search, arxiv_download_pdf
-    from tools.firecrawl import firecrawl_scrape, firecrawl_crawl, firecrawl_map
+    from tools.web import web_search, web_fetch
+    from tools.web import arxiv_search, arxiv_download_pdf
+    from tools.web import web_scrape, web_crawl, web_map
 
     return [
-        tavily_search,
-        tavily_extract,
+        web_search,
+        web_fetch,
         arxiv_search,
         arxiv_download_pdf,
-        firecrawl_scrape,
-        firecrawl_crawl,
-        firecrawl_map,
+        web_scrape,
+        web_crawl,
+        web_map,
     ]
 
 

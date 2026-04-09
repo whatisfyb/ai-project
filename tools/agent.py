@@ -62,69 +62,6 @@ def _run_subagent(subagent_type: str, prompt: str) -> dict[str, Any]:
     return result
 
 
-def _run_plan_execute(plan_id: str, timeout: int = 600) -> dict[str, Any]:
-    """执行已有计划（子线程模式，支持超时中断）
-
-    Args:
-        plan_id: 计划 ID
-        timeout: 超时时间（秒），默认10分钟
-
-    Returns:
-        执行结果
-    """
-    from concurrent.futures import ThreadPoolExecutor, TimeoutError
-    from agent.plan_store import PlanStore
-    from agent.executor import PlanExecutor
-
-    # 从 store 加载已有计划
-    store = PlanStore()
-    plan = store.load_plan(plan_id)
-
-    if not plan:
-        return {
-            "status": "error",
-            "error": f"Plan {plan_id} not found",
-        }
-
-    # 在子线程中执行（支持被中断）
-    def _execute():
-        executor = PlanExecutor(
-            plan_id=plan_id,
-            num_workers=2,
-        )
-        return executor.run()
-
-    with ThreadPoolExecutor(max_workers=1) as t_executor:
-        future = t_executor.submit(_execute)
-        try:
-            result = future.result(timeout=timeout)
-        except TimeoutError:
-            # 超时，但子线程继续运行（由 terminate() 处理）
-            return {
-                "plan_id": plan_id,
-                "status": "timeout",
-                "error": f"执行超时（{timeout}秒），任务仍在后台运行",
-                "goal": plan.goal,
-                "interrupted": True,
-            }
-        except Exception as e:
-            return {
-                "plan_id": plan_id,
-                "status": "error",
-                "error": str(e),
-            }
-
-    return {
-        "plan_id": plan_id,
-        "goal": result["goal"],
-        "completed": result["completed"],
-        "failed": result["failed"],
-        "total": result["total"],
-        "summarized_result": result.get("summarized_result"),
-        "tasks": result["tasks"],
-    }
-
-
 def _generate_summary(subagent_type: str, result: dict) -> str:
     """生成结果摘要"""
     if subagent_type == "Plan":
@@ -156,7 +93,7 @@ def dispatch_agent(
     - Research: For searching information, downloading papers, using RAG knowledge base
     - Analysis: For data analysis, report generation, visualization suggestions
 
-    Note: For executing a plan, use the execute_plan tool instead.
+    For managing and executing plans, use the plan_* tools (plan_list, plan_get, plan_execute, etc.)
 
     Args:
         subagent_type: Type of subagent to use (Plan/Research/Analysis)
@@ -180,62 +117,6 @@ def dispatch_agent(
             "status": "error",
             "subagent_type": subagent_type,
             "prompt": prompt,
-            "error": str(e),
-        }
-
-
-@tool
-def execute_plan(plan_id: str) -> dict[str, Any]:
-    """Execute an existing plan by its plan_id.
-
-    Use this tool after dispatch_agent with Plan subagent_type to execute the generated plan.
-
-    Args:
-        plan_id: The ID of the plan to execute (returned from dispatch_agent with subagent_type="Plan")
-
-    Returns:
-        Dictionary containing execution results with status, summary, and task details
-    """
-    try:
-        result = _run_plan_execute(plan_id)
-
-        result_status = result.get("status", "completed")
-
-        if result_status == "error":
-            return {
-                "status": "error",
-                "plan_id": plan_id,
-                "error": result.get("error"),
-            }
-
-        if result_status == "timeout":
-            return {
-                "status": "timeout",
-                "plan_id": plan_id,
-                "goal": result.get("goal"),
-                "error": result.get("error"),
-                "summary": result.get("error", "执行超时"),
-            }
-
-        completed = result.get("completed", 0)
-        failed = result.get("failed", 0)
-        total = result.get("total", 0)
-
-        return {
-            "status": "completed",
-            "plan_id": plan_id,
-            "goal": result.get("goal"),
-            "completed": completed,
-            "failed": failed,
-            "total": total,
-            "summarized_result": result.get("summarized_result"),
-            "tasks": result.get("tasks", []),
-            "summary": f"执行完成：{completed}/{total} 成功，{failed} 失败",
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "plan_id": plan_id,
             "error": str(e),
         }
 
