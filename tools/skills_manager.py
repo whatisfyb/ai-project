@@ -283,6 +283,66 @@ def list_skills() -> list[dict[str, Any]]:
     return _list_skills_raw()
 
 
+def skill_call_impl(name: str, args: dict) -> dict[str, Any]:
+    """调用已加载的技能执行实际任务。
+
+    使用此工具前，必须先用 load_skills 加载对应技能。
+
+    Args:
+        name: 技能名称（如 "weather", "search" 等）
+        args: 技能参数字典（如 {"city": "北京", "days": 3}）
+    """
+    # 先加载 skill（使用缓存）
+    skill = get_skill(name)
+    if skill is None:
+        return {
+            "success": False,
+            "error": f"技能 '{name}' 未找到，请先调用 load_skills(['{name}']) 加载",
+        }
+
+    run_func = skill.get("run")
+    if not callable(run_func):
+        return {
+            "success": False,
+            "error": f"技能 '{name}' 的 run 函数不可调用",
+        }
+
+    try:
+        result = run_func(**args)
+        return {
+            "success": True,
+            "skill": name,
+            "result": result,
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "skill": name,
+            "error": str(e),
+        }
+
+
+@tool
+def skill_call(name: str, args_json: str) -> dict[str, Any]:
+    """调用已加载的技能执行实际任务。
+
+    使用此工具前，必须先用 load_skills 加载对应技能。
+
+    Args:
+        name: 技能名称（如 "weather"）
+        args_json: 技能参数的 JSON 字符串（如 \'{"city": "北京", "days": 3}\'）
+    """
+    import json
+    try:
+        args = json.loads(args_json)
+    except json.JSONDecodeError as e:
+        return {
+            "success": False,
+            "error": f"参数解析失败: {e}",
+        }
+    return skill_call_impl(name, args)
+
+
 @tool
 def load_skills(names: list[str]) -> dict[str, Any]:
     """加载指定的技能到当前上下文，使LLM可以调用这些技能。

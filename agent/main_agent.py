@@ -32,6 +32,13 @@ MAIN_AGENT_PROMPT = """你是一个智能助手，能够理解用户需求并选
 
 - `list_subagents` - 列出所有可用的子代理
 
+### Skills 技能工具
+- `list_skills` - 列出所有可用的 AI 技能（如天气查询等）
+- `load_skills` - 加载指定技能到当前上下文（需要技能名称列表）
+- `skill_call` - 调用已加载的技能执行实际任务
+  - name: 技能名称（如 "weather"）
+  - args_json: 技能参数的 JSON 字符串（如 \'{"city": "北京", "days": 3}\'）
+
 ## 决策规则
 
 1. **简单对话**（问候、闲聊）：直接回复，不要调用任何工具
@@ -76,7 +83,7 @@ class MainAgent:
         from tools.tavily import tavily_search, tavily_extract
         from tools.arxiv_search import arxiv_search, arxiv_download_pdf
         from tools.agent import dispatch_agent, list_subagents, execute_plan
-        from tools.skills_manager import load_skills, list_skills
+        from tools.skills_manager import load_skills, list_skills, skill_call
 
         self.tools = [
             tavily_search,
@@ -88,6 +95,7 @@ class MainAgent:
             list_subagents,
             load_skills,
             list_skills,
+            skill_call,
         ]
 
         # 绑定工具到 LLM
