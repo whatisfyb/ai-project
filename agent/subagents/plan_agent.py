@@ -1,6 +1,8 @@
 """Plan Agent - 复杂任务拆解"""
 
 import json
+import os
+import time
 from typing import Literal
 from typing_extensions import TypedDict
 
@@ -53,26 +55,52 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
         task = state["task"]
         thread_id = state["thread_id"]
 
-        # 获取 JSON schema 用于提示词
-        schema = Plan.model_json_schema()
+        prompt = f"""你是一个任务规划专家，负责将复杂需求拆解为可执行的并行任务计划。
 
-        prompt = f"""你是一个任务规划专家。请分析以下任务，将其拆解为可执行的子任务。
+## 任务
+{task}
 
-任务：{task}
+## 你的职责
 
-请严格按照以下 JSON Schema 输出结果（只输出 JSON，不要其他内容）：
+深度分析需求后，识别：
+1. **可并行执行的部分** - 哪些子任务相互独立，可以同时执行？
+2. **串行依赖链** - 哪些任务必须按顺序执行？
+3. **合理的任务粒度** - 每个任务应该足够独立、可端到端完成
 
+## 任务拆解原则
+
+1. **独立性**：每个任务应该是自包含的，能独立执行并产生有意义的结果
+2. **可并行性**：没有依赖的任务应能并行执行
+3. **清晰描述**：description 要明确说明"做什么"，而不是"怎么做"
+4. **最小依赖**：只声明真正必要的依赖
+
+## 示例
+
+用户需求："帮我研究transformer和bert的区别"
+✅ 正确拆解：
 ```json
-{json.dumps(schema, ensure_ascii=False, indent=2)}
+{{
+  "goal": "分析transformer和bert的区别",
+  "tasks": [
+    {{"id": "T1", "description": "在arxiv搜索transformer相关论文", "dependencies": []}},
+    {{"id": "T2", "description": "用网页搜索bert的含义和原理", "dependencies": []}},
+    {{"id": "T3", "description": "对比transformer和bert的区别并总结", "dependencies": ["T1", "T2"]}}
+  ]
+}}
 ```
 
-要求：
-1. 拆分为多个有依赖关系的子任务
-2. 每个任务要有唯一 ID（如 T1, T2, T3）
-3. 明确任务之间的依赖关系（某任务依赖哪些其他任务完成后才能执行）
-4. 没有依赖的任务可以并行执行
-5. 使用中文描述
-6. 只输出 JSON，不要输出任何其他内容"""
+## 输出格式
+
+**只输出JSON，不要任何解释**：
+```json
+{{
+  "goal": "整体目标描述",
+  "tasks": [
+    {{"id": "T1", "description": "任务描述", "dependencies": []}},
+    {{"id": "T2", "description": "任务描述", "dependencies": ["T1"]}}
+  ]
+}}
+```"""
 
         response = self.llm.invoke(prompt)
         content = response.content
@@ -88,6 +116,13 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
                 json_str = content.strip()
 
             data = json.loads(json_str)
+            # Debug: 写入原始JSON到文件
+            debug_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "debug")
+            os.makedirs(debug_dir, exist_ok=True)
+            debug_file = os.path.join(debug_dir, f"plan_debug_{int(time.time() * 1000)}.json")
+            with open(debug_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+            print(f"[DEBUG] Plan写入: {debug_file}")
             plan = Plan.model_validate(data)
         except (json.JSONDecodeError, ValueError) as e:
             # 解析失败，创建默认计划
@@ -269,7 +304,7 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
     
 if __name__ == "__main__":
     agent = PlanAgent()
-    plan, plan_id = agent.run("撰写一篇关于人工智能未来发展的文章")
+    plan, plan_id = agent.run("我要你创建一个plan：T1与T2并行运行 T1 上arxiv查找3篇transformer论文 T2 用网页搜索搜索bert的含义 T3 前两个任务执行完毕后 总结transformer和Bert的区别")
     print(f"生成的计划 ID: {plan_id}")
     print("计划内容:")
     for task in plan.tasks:
