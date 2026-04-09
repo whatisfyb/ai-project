@@ -35,6 +35,11 @@ def get_settings() -> dict[str, Any]:
 
 class SingleLLMConfig:
     """单个 LLM 模型配置"""
+
+    # 默认上下文窗口大小
+    DEFAULT_CONTEXT_WINDOW = 128_000
+    DEFAULT_MAX_OUTPUT_TOKENS = 8_192
+
     def __init__(
         self,
         name: str = "",
@@ -43,6 +48,8 @@ class SingleLLMConfig:
         base_url: str = ...,
         temperature: float = 0.7,
         timeout: int = 120,
+        context_window: int | None = None,
+        max_output_tokens: int | None = None,
     ):
         self.name = name
         self.model = model
@@ -50,6 +57,18 @@ class SingleLLMConfig:
         self.base_url = base_url
         self.temperature = temperature
         self.timeout = timeout
+        self._context_window = context_window
+        self._max_output_tokens = max_output_tokens
+
+    @property
+    def context_window(self) -> int:
+        """上下文窗口大小（tokens）"""
+        return self._context_window or self.DEFAULT_CONTEXT_WINDOW
+
+    @property
+    def max_output_tokens(self) -> int:
+        """最大输出 tokens"""
+        return self._max_output_tokens or self.DEFAULT_MAX_OUTPUT_TOKENS
 
 
 class LLMSettings:
@@ -127,6 +146,7 @@ class LangSmithSettings:
 
 class Settings:
     """应用全局配置"""
+
     def __init__(self):
         data = _load_config()
         self.llm = LLMSettings(data)
@@ -134,3 +154,96 @@ class Settings:
         self.tavily = TavilySettings(data)
         self.firecrawl = FirecrawlSettings(data)
         self.langsmith = LangSmithSettings(data)
+
+
+# ============ 上下文管理 ============
+
+class ContextThresholds:
+    """上下文阈值配置"""
+
+    def __init__(
+        self,
+        context_window: int,
+        max_output_tokens: int,
+        buffer_tokens: int = 10_000,
+        warning_pct: float = 0.80,
+        compact_pct: float = 0.90,
+        block_pct: float = 0.95,
+    ):
+        # 有效窗口 = 总窗口 - 输出预留 - 缓冲区
+        self.effective_window = context_window - max_output_tokens - buffer_tokens
+        self.warning_threshold = int(self.effective_window * warning_pct)
+        self.compact_threshold = int(self.effective_window * compact_pct)
+        self.block_threshold = int(self.effective_window * block_pct)
+
+
+class ContextStatus:
+    """上下文状态"""
+
+    def __init__(self, current_tokens: int, thresholds: ContextThresholds):
+        self.current_tokens = current_tokens
+        self.thresholds = thresholds
+
+    @property
+    def percent_used(self) -> float:
+        """使用百分比"""
+        return min(100, (self.current_tokens / self.thresholds.effective_window) * 100)
+
+    @property
+    def tokens_remaining(self) -> int:
+        """剩余 tokens"""
+        return max(0, self.thresholds.effective_window - self.current_tokens)
+
+    @property
+    def should_warn(self) -> bool:
+        """是否应该警告"""
+        return self.current_tokens >= self.thresholds.warning_threshold
+
+    @property
+    def should_compact(self) -> bool:
+        """是否应该压缩"""
+        return self.current_tokens >= self.thresholds.compact_threshold
+
+    @property
+    def is_blocked(self) -> bool:
+        """是否阻塞（必须压缩）"""
+        return self.current_tokens >= self.thresholds.block_threshold
+
+    def get_action(self) -> str:
+        """获取建议动作"""
+        if self.is_blocked:
+            return "block"
+        elif self.should_compact:
+            return "compact"
+        elif self.should_warn:
+            return "warn"
+        return "ok"
+
+
+def get_context_thresholds(model_config: SingleLLMConfig) -> ContextThresholds:
+    """获取模型的上下文阈值"""
+    return ContextThresholds(
+        context_window=model_config.context_window,
+        max_output_tokens=model_config.max_output_tokens,
+    )
+
+
+def check_context_status(current_tokens: int, model_config: SingleLLMConfig) -> ContextStatus:
+    """检查上下文状态"""
+    thresholds = get_context_thresholds(model_config)
+    return ContextStatus(current_tokens, thresholds)
+
+
+# ============ 便捷函数 ============
+
+@lru_cache
+def get_settings_instance() -> Settings:
+    """获取全局 Settings 实例（缓存）"""
+    return Settings()
+
+
+def get_default_model_config() -> SingleLLMConfig:
+    """获取默认模型配置（第一个配置的模型）"""
+    settings = get_settings_instance()
+    models = settings.llm.get_models()
+    return models[0] if models else SingleLLMConfig()

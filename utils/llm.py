@@ -102,3 +102,32 @@ def reset_llm_models():
     global _llm_instances, _settings_instance
     _llm_instances = {}
     _settings_instance = None
+
+
+def get_llm_config(name: str | None = None) -> SingleLLMConfig:
+    """获取 LLM 模型配置
+
+    Args:
+        name: 模型标识名 (可选)
+
+    Returns:
+        SingleLLMConfig 配置对象
+
+    Raises:
+        ValueError: 未配置任何模型时抛出
+        KeyError: 指定名称的模型不存在
+    """
+    settings = _get_settings()
+    models = settings.llm.get_models()
+
+    if not models:
+        raise ValueError("未配置任何 LLM 模型，请检查 config.yaml")
+
+    if not name:
+        return models[0]
+
+    for cfg in models:
+        if cfg.name == name or _get_model_key(cfg) == name:
+            return cfg
+
+    raise KeyError(f"LLM model '{name}' not found in configuration")

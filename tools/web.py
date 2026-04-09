@@ -95,6 +95,19 @@ def _get_firecrawl_client():
         return None
 
 
+def _pydantic_to_dict(obj):
+    """将 Pydantic 对象转换为 dict"""
+    if hasattr(obj, 'model_dump'):
+        return obj.model_dump()
+    elif hasattr(obj, 'dict'):
+        return obj.dict()
+    elif isinstance(obj, list):
+        return [_pydantic_to_dict(item) for item in obj]
+    elif isinstance(obj, dict):
+        return {k: _pydantic_to_dict(v) for k, v in obj.items()}
+    return obj
+
+
 @tool
 def web_scrape(url: str, formats: list[str] | None = None) -> dict[str, Any]:
     """Scrape a single URL and extract content using Firecrawl.
@@ -115,7 +128,7 @@ def web_scrape(url: str, formats: list[str] | None = None) -> dict[str, Any]:
 
     try:
         result = client.scrape(url=url, formats=formats)
-        return result
+        return _pydantic_to_dict(result)
     except Exception as e:
         return {"error": str(e)}
 
@@ -137,8 +150,8 @@ def web_crawl(url: str, max_depth: int = 1, limit: int = 10) -> dict[str, Any]:
         return {"error": "FIRECRAWL_API_KEY not configured in config.yaml"}
 
     try:
-        result = client.crawl(url=url, max_depth=max_depth, limit=limit)
-        return result
+        result = client.crawl(url=url, max_discovery_depth=max_depth, limit=limit)
+        return _pydantic_to_dict(result)
     except Exception as e:
         return {"error": str(e)}
 
@@ -160,10 +173,10 @@ def web_map(url: str, search: str | None = None) -> dict[str, Any]:
 
     try:
         if search:
-            result = client.search(url=url, query=search)
+            result = client.map(url=url, search=search)
         else:
             result = client.map(url=url)
-        return result
+        return _pydantic_to_dict(result)
     except Exception as e:
         return {"error": str(e)}
 
