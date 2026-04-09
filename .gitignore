@@ -46,6 +46,9 @@ build/
 data/
 .store/
 
+# Runtime data
+.data/
+
 # Checkpoints (runtime state)
 # .checkpoints/
 

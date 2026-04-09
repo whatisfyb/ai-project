@@ -8,7 +8,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from agent.models import Plan, Task
+from agent.core.models import Plan, Task
+
+
+# 默认数据库路径
+DEFAULT_DB_PATH = Path(__file__).parent.parent / ".data" / "plans.db"
 
 
 class PlanRecord(BaseModel):
@@ -29,13 +33,13 @@ class PlanStore:
     - 中断恢复
     """
 
-    def __init__(self, db_path: str | Path = "data/plans.db"):
+    def __init__(self, db_path: str | Path = None):
         """初始化存储
 
         Args:
-            db_path: 数据库文件路径
+            db_path: 数据库文件路径，默认为 .data/plans.db
         """
-        self.db_path = Path(db_path)
+        self.db_path = Path(db_path) if db_path else DEFAULT_DB_PATH
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 

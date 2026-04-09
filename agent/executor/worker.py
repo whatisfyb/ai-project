@@ -5,34 +5,16 @@
 """
 
 import threading
-import time
 from typing import Optional
 
-from agent.plan_store import PlanStore
-from agent.models import Task
+from agent.core.models import Task
+from agent.core.signals import is_interrupted
+from store.plan import PlanStore
 from utils.llm import get_llm_model
-
-# 全局中断标志
-_interrupt_event = threading.Event()
-
-
-def set_interrupt():
-    """设置中断信号"""
-    _interrupt_event.set()
-
-
-def clear_interrupt():
-    """清除中断信号"""
-    _interrupt_event.clear()
-
-
-def is_interrupted() -> bool:
-    """检查是否被中断"""
-    return _interrupt_event.is_set()
 
 
 def _get_worker_tools():
-    """获取 Worker 可用的工具列表（排除 skills_manager 和 agent）"""
+    """获取 Worker 可用的工具列表"""
     from tools.web import web_search, web_fetch
     from tools.web import arxiv_search, arxiv_download_pdf
     from tools.web import web_scrape, web_crawl, web_map

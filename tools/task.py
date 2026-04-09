@@ -15,8 +15,8 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from agent.models import Task
-from agent.plan_store import PlanStore
+from agent.core.models import Task
+from store.plan import PlanStore
 
 
 # ============ Plan 操作 ============
@@ -34,7 +34,7 @@ def plan_get(plan_id: str) -> dict[str, Any]:
     store = PlanStore()
 
     # 获取 plan 记录以获取 thread_id
-    from agent.plan_store import PlanRecord
+    from store.plan import PlanRecord
     import sqlite3
     from datetime import datetime
 
@@ -101,7 +101,7 @@ def plan_execute(plan_id: str, timeout: int = 600) -> dict[str, Any]:
         Execution result or status
     """
     from concurrent.futures import ThreadPoolExecutor, TimeoutError
-    from agent.executor import PlanExecutor
+    from agent.executor.executor import PlanExecutor
 
     store = PlanStore()
     plan = store.load_plan(plan_id)
@@ -124,7 +124,7 @@ def plan_execute(plan_id: str, timeout: int = 600) -> dict[str, Any]:
     plan_thread_id = None
 
     try:
-        from agent.main_agent import _current_thread_id
+        from agent.main.agent import _current_thread_id
         current_thread_id = _current_thread_id.get()
     except:
         pass

@@ -16,7 +16,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
 
 
 # 默认数据库路径
-DEFAULT_DB_PATH = Path(__file__).parent.parent / "data" / "memory" / "sessions.db"
+DEFAULT_DB_PATH = Path(__file__).parent.parent / ".data" / "sessions.db"
 
 
 class SessionStore:

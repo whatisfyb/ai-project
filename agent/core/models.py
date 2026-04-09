@@ -1,6 +1,8 @@
-"""Agent 数据模型"""
+"""数据模型定义"""
 
-from typing import Literal
+from typing import Annotated, Any, Literal
+from typing_extensions import TypedDict
+import operator
 
 from pydantic import BaseModel, Field
 
@@ -25,3 +27,11 @@ class Plan(BaseModel):
         default="pending", description="计划状态"
     )
     summarized_result: str | None = Field(default=None, description="最终汇总结果")
+
+
+class MainAgentState(TypedDict):
+    """Main Agent 状态"""
+    messages: Annotated[list[dict], operator.add]  # 消息历史
+    current_task: str | None  # 当前任务
+    memory_context: str | None  # 记忆上下文
+    subagent_results: dict[str, Any]  # 子代理结果

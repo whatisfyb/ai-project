@@ -34,7 +34,7 @@ def _get_subagent_description(subagent_type: str) -> str:
 
 def _get_current_thread_id() -> str:
     """获取当前 thread_id（从 context variable）"""
-    from agent.main_agent import _current_thread_id
+    from agent.main.agent import _current_thread_id
     return _current_thread_id.get()
 
 

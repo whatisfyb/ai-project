@@ -14,9 +14,11 @@ from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 
-from agent.plan_store import PlanStore
-from agent.models import Task, Plan
-from agent.worker import TaskWorker, set_interrupt, clear_interrupt, is_interrupted
+from agent.core.models import Task, Plan
+from agent.core.signals import set_interrupt, clear_interrupt, is_interrupted
+from agent.core.registry import agent_registry
+from agent.executor.worker import TaskWorker
+from store.plan import PlanStore
 
 
 class WorkerRegistry:
@@ -203,14 +205,12 @@ class PlanExecutor:
         Returns:
             执行结果
         """
-        from agent.registry import agent_registry
-
         # 清除之前的中断标志
         clear_interrupt()
         self._setup_interrupt_handler()
 
-        # 注册到全局 AgentRegistry
-        agent_registry.register(self.plan_id, self)
+        # 注册到全局 AgentRegistry（传入终止函数）
+        agent_registry.register(self.plan_id, self.terminate)
 
         try:
             self.executor = ThreadPoolExecutor(max_workers=self.num_workers)
@@ -270,7 +270,6 @@ class PlanExecutor:
 
         finally:
             # 从全局 AgentRegistry 注销
-            from agent.registry import agent_registry
             agent_registry.unregister(self.plan_id)
             # 关闭所有 Worker
             self._shutdown_all_workers()
@@ -397,8 +396,6 @@ class PlanExecutor:
         注意：这是非阻塞调用，仅设置标志。
         实际的清理在 executor.run() 的 finally 块中完成。
         """
-        from agent.registry import agent_registry
-
         # 1. 设置全局中断标志（workers 会在下一次检查时退出）
         set_interrupt()
 

@@ -8,9 +8,9 @@ from typing_extensions import TypedDict
 
 from langgraph.graph import StateGraph, END, START
 
-from agent.models import Plan, Task
+from agent.core.models import Plan, Task
 from agent.subagents.base import BaseSubagent
-from agent.plan_store import PlanStore
+from store.plan import PlanStore
 
 
 # ============ Agent 状态 ============
@@ -301,7 +301,7 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
             Plan 列表
         """
         return self.store.list_plans(status=status)
-    
+
 if __name__ == "__main__":
     agent = PlanAgent()
     plan, plan_id = agent.run("我要你创建一个plan：T1与T2并行运行 T1 上arxiv查找3篇transformer论文 T2 用网页搜索搜索bert的含义 T3 前两个任务执行完毕后 总结transformer和Bert的区别")

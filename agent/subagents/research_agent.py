@@ -8,6 +8,7 @@ from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END, START
 
 from agent.subagents.base import BaseSubagent
+from agent.core.models import Plan, Task
 from tools.web import web_search, web_fetch
 from tools.web import arxiv_search, arxiv_download_pdf
 
