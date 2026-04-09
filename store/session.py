@@ -196,22 +196,48 @@ class SessionStore:
         session_id: str,
         messages: list[BaseMessage],
     ) -> int:
-        """批量添加消息（从 LangGraph messages 同步）"""
+        """批量添加消息（从 LangGraph messages 同步）
+
+        支持保存完整的工具调用上下文：
+        - user: HumanMessage
+        - assistant: AIMessage（可能包含 tool_calls）
+        - tool: ToolMessage（工具返回结果）
+        """
+        from langchain_core.messages import ToolMessage
+
         now = datetime.now().isoformat()
         count = 0
 
         with sqlite3.connect(self.db_path) as conn:
             for msg in messages:
-                role = "user" if isinstance(msg, HumanMessage) else "assistant"
+                # 确定角色
+                if isinstance(msg, HumanMessage):
+                    role = "user"
+                elif isinstance(msg, ToolMessage):
+                    role = "tool"
+                else:
+                    role = "assistant"
+
                 content = msg.content or ""
 
                 # 提取 metadata
                 metadata = {}
+
+                # AIMessage 可能有 tool_calls
                 if hasattr(msg, "tool_calls") and msg.tool_calls:
                     metadata["tool_calls"] = [
-                        {"name": tc.get("name"), "args": tc.get("args")}
+                        {
+                            "id": tc.get("id"),
+                            "name": tc.get("name"),
+                            "args": tc.get("args"),
+                        }
                         for tc in msg.tool_calls
                     ]
+
+                # ToolMessage 有 tool_call_id
+                if isinstance(msg, ToolMessage):
+                    metadata["tool_call_id"] = msg.tool_call_id
+                    metadata["name"] = msg.name
 
                 metadata_json = json.dumps(metadata) if metadata else None
 

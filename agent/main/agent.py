@@ -150,8 +150,8 @@ class MainAgent:
         # 确保会话存在
         self.session_store.get_or_create_session(thread_id)
 
-        # 保存用户消息
-        self.session_store.add_message(thread_id, "user", message)
+        # 记录对话前的消息数量（用于后续同步）
+        pre_msg_count = len(self.session_store.get_messages(thread_id))
 
         # 从 checkpointer 获取历史消息
         config = {"configurable": {"thread_id": thread_id}}
@@ -160,14 +160,38 @@ class MainAgent:
 
         # 如果 LangGraph 没有历史（重启后），从 session_store 恢复
         if not existing_messages:
+            from langchain_core.messages import ToolMessage
             history = self.session_store.get_messages(thread_id)
             # 排除刚添加的用户消息
             history = [h for h in history if h['role'] != 'user' or h['content'] != message]
             for h in history:
-                if h['role'] == 'user':
-                    existing_messages.append(HumanMessage(content=h['content']))
+                metadata = h.get('metadata') or {}
+                role = h['role']
+                content = h['content'] or ""
+
+                if role == 'user':
+                    existing_messages.append(HumanMessage(content=content))
+                elif role == 'tool':
+                    # ToolMessage 需要 tool_call_id
+                    tool_call_id = metadata.get('tool_call_id')
+                    tool_name = metadata.get('name')
+                    if tool_call_id:
+                        existing_messages.append(ToolMessage(
+                            content=content,
+                            tool_call_id=tool_call_id,
+                            name=tool_name,
+                        ))
                 else:
-                    existing_messages.append(AIMessage(content=h['content']))
+                    # assistant - 检查是否有 tool_calls
+                    tool_calls = metadata.get('tool_calls')
+                    if tool_calls:
+                        # 有工具调用，需要创建带 tool_calls 的 AIMessage
+                        existing_messages.append(AIMessage(
+                            content=content,
+                            tool_calls=tool_calls,
+                        ))
+                    else:
+                        existing_messages.append(AIMessage(content=content))
 
         # 追加新消息
         input_data = {
@@ -190,10 +214,14 @@ class MainAgent:
             ):
                 # 每次收到 chunk 后检查中断
                 if is_interrupted():
-                    # 被中断了，保存已收到的内容作为助手消息
-                    if accumulated_response:
-                        existing_messages.append(AIMessage(content=accumulated_response))
-                        self.session_store.add_message(thread_id, "assistant", accumulated_response)
+                    # 被中断了，同步已生成的消息到 session_store
+                    final_state = graph.get_state(config)
+                    if final_state and final_state.values:
+                        final_messages = final_state.values.get("messages", [])
+                        new_messages = final_messages[pre_msg_count:]
+                        if new_messages:
+                            self.session_store.add_messages_batch(thread_id, new_messages)
+                        existing_messages = list(final_messages)
                     existing_messages.append(
                         AIMessage(content="[系统消息] 用户中断了执行。")
                     )
@@ -211,19 +239,27 @@ class MainAgent:
                     pass
 
         except asyncio.CancelledError:
-            # 被取消，保存部分输出
-            if accumulated_response:
-                existing_messages.append(AIMessage(content=accumulated_response))
-                self.session_store.add_message(thread_id, "assistant", accumulated_response)
-            existing_messages.append(
-                AIMessage(content="[系统消息] 用户中断了执行。")
-            )
+            # 被取消，同步已生成的消息到 session_store
+            final_state = graph.get_state(config)
+            if final_state and final_state.values:
+                final_messages = final_state.values.get("messages", [])
+                # 获取新增的消息（对话前有 pre_msg_count 条）
+                new_messages = final_messages[pre_msg_count:]
+                if new_messages:
+                    self.session_store.add_messages_batch(thread_id, new_messages)
             raise
 
-        # 正常结束，保存最终响应
-        if accumulated_response:
-            existing_messages.append(AIMessage(content=accumulated_response))
-            self.session_store.add_message(thread_id, "assistant", accumulated_response)
+        # 正常结束，同步完整消息链到 session_store
+        # 从 graph 最终状态获取所有消息，只同步新增的部分
+        final_state = graph.get_state(config)
+        if final_state and final_state.values:
+            final_messages = final_state.values.get("messages", [])
+            # 获取新增的消息（对话前有 pre_msg_count 条）
+            new_messages = final_messages[pre_msg_count:]
+            if new_messages:
+                self.session_store.add_messages_batch(thread_id, new_messages)
+            # 更新 existing_messages 用于返回
+            existing_messages = list(final_messages)
 
         return {"messages": existing_messages}
 

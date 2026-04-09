@@ -50,8 +50,8 @@ async def _run_repl_async():
         "[bold green]Main Agent 已启动[/bold green]\n"
         "输入消息与 Agent 对话\n\n"
         "[dim]命令：[/dim]\n"
+        "  [cyan]/new[/cyan]       - 创建新会话\n"
         "  [cyan]/exit[/cyan]      - 退出\n"
-        "  [cyan]/clear[/cyan]     - 重置会话\n"
         "  [cyan]/status[/cyan]    - 查看状态\n"
         "  [cyan]/sessions[/cyan]  - 列出所有会话\n"
         "  [cyan]/resume <id>[/cyan] - 切换到指定会话\n"
@@ -60,7 +60,9 @@ async def _run_repl_async():
         title="Main Agent"
     ))
 
-    thread_id = "default"
+    # 启动时创建新会话
+    thread_id = f"session_{int(__import__('time').time())}"
+    session_store.create_session(thread_id)
 
     while True:
         # 检查是否被中断
@@ -103,9 +105,10 @@ async def _run_repl_async():
             console.print("[bold yellow]再见！[/bold yellow]")
             break
 
-        if cmd_lower == "/clear":
+        if cmd_lower == "/new":
             thread_id = f"session_{int(__import__('time').time())}"
-            console.print("[bold green]会话已重置[/bold green]\n")
+            session_store.create_session(thread_id)
+            console.print("[bold green]已创建新会话[/bold green]\n")
             continue
 
         if cmd_lower == "/status":
