@@ -203,9 +203,14 @@ class PlanExecutor:
         Returns:
             执行结果
         """
+        from agent.registry import agent_registry
+
         # 清除之前的中断标志
         clear_interrupt()
         self._setup_interrupt_handler()
+
+        # 注册到全局 AgentRegistry
+        agent_registry.register(self.plan_id, self)
 
         try:
             self.executor = ThreadPoolExecutor(max_workers=self.num_workers)
@@ -264,6 +269,9 @@ class PlanExecutor:
             }
 
         finally:
+            # 从全局 AgentRegistry 注销
+            from agent.registry import agent_registry
+            agent_registry.unregister(self.plan_id)
             # 关闭所有 Worker
             self._shutdown_all_workers()
             self._restore_interrupt_handler()
@@ -383,6 +391,34 @@ class PlanExecutor:
         if self.executor:
             self.executor.shutdown(wait=False)
 
+    def terminate(self):
+        """终止执行（非阻塞，用于信号处理器）
+
+        注意：这是非阻塞调用，仅设置标志。
+        实际的清理在 executor.run() 的 finally 块中完成。
+        """
+        from agent.registry import agent_registry
+
+        # 1. 设置全局中断标志（workers 会在下一次检查时退出）
+        set_interrupt()
+
+        # 2. 关闭线程池（不等待）
+        if self.executor:
+            self.executor.shutdown(wait=False)
+
+        # 3. 清理 futures（不等待 workers）
+        self.futures.clear()
+
+        # 4. 释放被占用但未完成的任务
+        plan = self.store.load_plan(self.plan_id)
+        if plan:
+            for task in plan.tasks:
+                if task.claimed_by and task.status == "pending":
+                    self.store.release_task(self.plan_id, task.id)
+
+        # 5. 从全局注册表移除
+        agent_registry.unregister(self.plan_id)
+
     def _summarize_results(self, plan: Plan) -> str:
         """汇总任务结果
 
@@ -419,14 +455,6 @@ class PlanExecutor:
 
         response = llm.invoke(prompt)
         return response.content
-
-    def cancel(self):
-        """取消所有 Worker"""
-        set_interrupt()  # 设置全局中断标志
-        for future in self.futures:
-            future.cancel()
-        if self.executor:
-            self.executor.shutdown(wait=False)
 
     def _all_done(self) -> bool:
         """检查所有任务是否完成或失败"""

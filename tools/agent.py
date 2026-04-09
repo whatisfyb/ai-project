@@ -62,15 +62,17 @@ def _run_subagent(subagent_type: str, prompt: str) -> dict[str, Any]:
     return result
 
 
-def _run_plan_execute(plan_id: str) -> dict[str, Any]:
-    """执行已有计划
+def _run_plan_execute(plan_id: str, timeout: int = 600) -> dict[str, Any]:
+    """执行已有计划（子线程模式，支持超时中断）
 
     Args:
         plan_id: 计划 ID
+        timeout: 超时时间（秒），默认10分钟
 
     Returns:
         执行结果
     """
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError
     from agent.plan_store import PlanStore
     from agent.executor import PlanExecutor
 
@@ -84,12 +86,33 @@ def _run_plan_execute(plan_id: str) -> dict[str, Any]:
             "error": f"Plan {plan_id} not found",
         }
 
-    # 执行计划
-    executor = PlanExecutor(
-        plan_id=plan_id,
-        num_workers=2,
-    )
-    result = executor.run()
+    # 在子线程中执行（支持被中断）
+    def _execute():
+        executor = PlanExecutor(
+            plan_id=plan_id,
+            num_workers=2,
+        )
+        return executor.run()
+
+    with ThreadPoolExecutor(max_workers=1) as t_executor:
+        future = t_executor.submit(_execute)
+        try:
+            result = future.result(timeout=timeout)
+        except TimeoutError:
+            # 超时，但子线程继续运行（由 terminate() 处理）
+            return {
+                "plan_id": plan_id,
+                "status": "timeout",
+                "error": f"执行超时（{timeout}秒），任务仍在后台运行",
+                "goal": plan.goal,
+                "interrupted": True,
+            }
+        except Exception as e:
+            return {
+                "plan_id": plan_id,
+                "status": "error",
+                "error": str(e),
+            }
 
     return {
         "plan_id": plan_id,
@@ -176,11 +199,22 @@ def execute_plan(plan_id: str) -> dict[str, Any]:
     try:
         result = _run_plan_execute(plan_id)
 
-        if "error" in result:
+        result_status = result.get("status", "completed")
+
+        if result_status == "error":
             return {
                 "status": "error",
                 "plan_id": plan_id,
-                "error": result["error"],
+                "error": result.get("error"),
+            }
+
+        if result_status == "timeout":
+            return {
+                "status": "timeout",
+                "plan_id": plan_id,
+                "goal": result.get("goal"),
+                "error": result.get("error"),
+                "summary": result.get("error", "执行超时"),
             }
 
         completed = result.get("completed", 0)

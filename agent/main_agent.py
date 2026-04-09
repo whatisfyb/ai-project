@@ -1,8 +1,9 @@
 """Main Agent - 智能路由主代理"""
 
+import asyncio
 from typing import Any
 
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, SystemMessage
 from langgraph.graph import StateGraph, END, START
 from langgraph.prebuilt import ToolNode
 
@@ -27,7 +28,7 @@ MAIN_AGENT_PROMPT = """你是一个智能助手，能够理解用户需求并选
   - subagent_type="Research": 用于信息搜索、论文查找、知识库检索
   - subagent_type="Analysis": 用于数据分析、报告生成
 
-- `execute_plan` - 执行已有的计划（需要先通过 dispatch_agent 生成计划获得 plan_id）
+- `execute_plan` - 执行已有的计划（需要 plan_id）。如果之前的计划被中断，用户想继续时，用之前的 plan_id 调用此工具恢复执行。
 
 - `list_subagents` - 列出所有可用的子代理
 
@@ -41,9 +42,18 @@ MAIN_AGENT_PROMPT = """你是一个智能助手，能够理解用户需求并选
    - 先用 dispatch_agent，subagent_type="Plan" 生成计划，获取 plan_id
    - 再用 execute_plan，plan_id=<上一步返回的plan_id> 执行计划
 6. **数据分析**（"分析XXX数据"、"生成报告"）：使用 dispatch_agent，subagent_type="Analysis"
+7. **恢复中断的任务**（"继续"、"继续执行"、"接着做"）：
+   - 从对话历史中找到最近的 plan_id
+   - 使用 execute_plan(plan_id) 恢复执行
 
 重要：对于简单问候和闲聊，直接回复用户，不要调用任何工具！
 """
+
+
+def _is_interrupted() -> bool:
+    """检查是否被中断"""
+    from agent.worker import is_interrupted as _is_interrupted
+    return _is_interrupted()
 
 
 class MainAgent:
@@ -83,7 +93,7 @@ class MainAgent:
         # 绑定工具到 LLM
         self.llm_with_tools = self.llm.bind_tools(self.tools)
 
-    def _reason_node(self, state: MainAgentState) -> dict:
+    async def _reason_node(self, state: MainAgentState) -> dict:
         """推理节点 - 分析用户输入并决定下一步"""
         messages = state["messages"]
         current_task = state.get("current_task")
@@ -98,8 +108,8 @@ class MainAgent:
         else:
             all_messages = [system_msg] + messages
 
-        # 调用 LLM 进行推理
-        response = self.llm_with_tools.invoke(all_messages)
+        # 异步调用 LLM
+        response = await self.llm_with_tools.ainvoke(all_messages)
 
         return {"messages": [response]}
 
@@ -162,19 +172,19 @@ class MainAgent:
             self._checkpointer = MemorySaver()
         return self._checkpointer
 
-    def chat(self, message: str, thread_id: str = "default") -> dict[str, Any]:
-        """与 Main Agent 对话
+    async def chat_async(self, message: str, thread_id: str = "default", on_token=None) -> dict[str, Any]:
+        """与 Main Agent 对话（streaming 模式）
 
         Args:
             message: 用户消息
             thread_id: 会话 ID
+            on_token: 回调函数，每收到一个 token 就调用 on_token(token)
 
         Returns:
-            响应结果
+            响应结果，包含 messages
         """
         from langchain_core.messages import HumanMessage
 
-        # 使用共享的图
         graph = self.graph
 
         # 从 checkpointer 获取历史消息
@@ -190,8 +200,73 @@ class MainAgent:
             "subagent_results": {},
         }
 
-        result = graph.invoke(input_data, config)
-        return result
+        accumulated_response = ""
+
+        # 使用 astream() 进行 streaming
+        # 注意：astream 内部 yield 不频繁，需要用 wait_for 加超时来检查中断
+        try:
+            async for chunk in graph.astream(
+                input_data,
+                config,
+                stream_mode=["messages", "updates"],
+                version="v2",
+            ):
+                # 每次收到 chunk 后检查中断
+                if _is_interrupted():
+                    # 被中断了，保存已收到的内容作为助手消息
+                    if accumulated_response:
+                        existing_messages.append(AIMessage(content=accumulated_response))
+                    existing_messages.append(
+                        AIMessage(content="[系统消息] 用户中断了执行。")
+                    )
+                    return {"messages": existing_messages}
+
+                # version="v2" 返回 dict 格式: {"type": ..., "data": ..., "ns": ...}
+                if chunk.get("type") == "messages":
+                    msg, _ = chunk.get("data", {})
+                    if isinstance(msg, AIMessageChunk) and msg.content:
+                        accumulated_response += msg.content
+                        if on_token:
+                            on_token(msg.content)
+                elif chunk.get("type") == "updates":
+                    # 节点更新，不做特殊处理
+                    pass
+
+        except asyncio.CancelledError:
+            # 被取消，保存部分输出
+            if accumulated_response:
+                existing_messages.append(AIMessage(content=accumulated_response))
+            existing_messages.append(
+                AIMessage(content="[系统消息] 用户中断了执行。")
+            )
+            raise
+
+        # 正常结束，保存最终响应
+        if accumulated_response:
+            existing_messages.append(AIMessage(content=accumulated_response))
+
+        return {"messages": existing_messages}
+
+    def chat(self, message: str, thread_id: str = "default") -> dict[str, Any]:
+        """与 Main Agent 对话（兼容模式，内部调用 async 版本）
+
+        Args:
+            message: 用户消息
+            thread_id: 会话 ID
+
+        Returns:
+            响应结果
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            # 已经在 running loop 中，创建 task
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor() as pool:
+                future = pool.submit(asyncio.run, self.chat_async(message, thread_id))
+                return future.result()
+        except RuntimeError:
+            # 没有 running loop，可以直接用 asyncio.run
+            return asyncio.run(self.chat_async(message, thread_id))
 
     def get_response(self, result: dict[str, Any]) -> str:
         """从结果中提取响应文本"""
@@ -208,50 +283,131 @@ def create_main_agent() -> MainAgent:
     return MainAgent()
 
 
-# 简单的 REPL 入口
+# ============ REPL 入口 ============
+
+# 模块级别的中断标志（用于 signal handler 和 async 函数之间共享）
+_repl_interrupted = False
+
+
 def run_repl():
-    """运行 REPL 交互"""
+    """运行 REPL 交互（同步入口，内部启动 async 循环）"""
+    import asyncio
+    import signal
+    from agent.registry import agent_registry, terminate
+    from agent.worker import set_interrupt, is_interrupted, clear_interrupt
+
+    global _repl_interrupted
+
+    def handle_interrupt(signum, frame):
+        """REPL 级别的 Ctrl+C 处理"""
+        global _repl_interrupted
+        _repl_interrupted = True
+        set_interrupt()
+
+    # 保存原始处理器并注册新的
+    _old_sigint_handler = signal.signal(signal.SIGINT, handle_interrupt)
+
+    try:
+        asyncio.run(_run_repl_async())
+    finally:
+        signal.signal(signal.SIGINT, _old_sigint_handler)
+
+
+async def _run_repl_async():
+    """异步 REPL 循环"""
+    global _repl_interrupted
     from rich.console import Console
     from rich.markdown import Markdown
+    from rich.panel import Panel
+    from agent.registry import agent_registry, terminate
+    from agent.worker import is_interrupted, clear_interrupt
 
     console = Console()
     agent = create_main_agent()
 
-    console.print("[bold green]Main Agent 已启动[/bold green]")
-    console.print("输入消息与 Agent 对话，输入 /exit 退出\n")
+    console.print(Panel.fit(
+        "[bold green]Main Agent 已启动[/bold green]\n"
+        "输入消息与 Agent 对话\n\n"
+        "[dim]命令：[/dim]\n"
+        "  [cyan]/exit[/cyan]  - 退出\n"
+        "  [cyan]/clear[/cyan]  - 重置会话\n"
+        "  [cyan]/status[/cyan]  - 查看状态\n"
+        "  [cyan]Ctrl+C[/cyan]   - 终止当前任务",
+        title="Main Agent"
+    ))
 
     thread_id = "default"
 
     while True:
+        # 检查是否被中断
+        if _repl_interrupted:
+            _repl_interrupted = False
+            clear_interrupt()
+            if agent_registry.is_running():
+                terminate()
+                console.print("[yellow]任务已终止[/yellow]\n")
+                console.print("[dim]请输入新任务或 /exit 退出[/dim]\n")
+            else:
+                # 没有任务在运行，Ctrl+C 只是放弃当前输入，继续等待
+                console.print("[dim]已取消输入[/dim]\n")
+            continue
+
+        # 异步等待用户输入（使用 asyncio.to_thread 避免阻塞事件循环）
         try:
-            user_input = console.input("[bold blue]You:[/bold blue] ").strip()
+            user_input = await asyncio.to_thread(
+                lambda: console.input("[bold blue]You:[/bold blue] ").strip()
+            )
+        except (KeyboardInterrupt, EOFError):
+            # Ctrl+C 或 Ctrl+D 在等待输入时
+            user_input = ""
 
-            if not user_input:
-                continue
+        if not user_input:
+            # Ctrl+C 会导致 user_input 为空，这不算正常输入，继续循环即可
+            continue
 
-            if user_input.lower() == "/exit":
-                console.print("[bold yellow]再见！[/bold yellow]")
-                break
+        if not user_input:
+            continue
 
-            if user_input.lower() == "/clear":
-                thread_id = f"session_{int(__import__('time').time())}"
-                console.print("[bold green]会话已重置[/bold green]\n")
-                continue
-
-            # 调用 Agent
-            result = agent.chat(user_input, thread_id)
-            response = agent.get_response(result)
-
-            # 显示响应
-            console.print("\n[bold green]Agent:[/bold green]")
-            console.print(Markdown(response))
-            console.print()
-
-        except KeyboardInterrupt:
-            console.print("\n[bold yellow]再见！[/bold yellow]")
+        if user_input.lower() == "/exit":
+            console.print("[bold yellow]再见！[/bold yellow]")
             break
+
+        if user_input.lower() == "/clear":
+            thread_id = f"session_{int(__import__('time').time())}"
+            console.print("[bold green]会话已重置[/bold green]\n")
+            continue
+
+        if user_input.lower() == "/status":
+            running = agent_registry.is_running()
+            plan_ids = agent_registry.get_running_plan_ids()
+            if running:
+                console.print(f"[cyan]正在运行的任务: {plan_ids}[/cyan]\n")
+            else:
+                console.print("[dim]没有正在运行的任务[/dim]\n")
+            continue
+
+        # 调用 Agent（async streaming 模式）
+        console.print("\n[bold green]Agent:[/bold green] ")
+        accumulated = []
+
+        def on_token(token):
+            accumulated.append(token)
+            console.print(token, end="")  # 实时打印 token
+
+        try:
+            result = await agent.chat_async(user_input, thread_id, on_token=on_token)
         except Exception as e:
             console.print(f"\n[bold red]错误:[/bold red] {e}\n")
+            continue
+
+        console.print()  # 换行
+
+        # 如果被中断了，打印提示
+        if is_interrupted():
+            console.print("[yellow]\n[执行被中断，已保存部分输出][/yellow]\n")
+            clear_interrupt()
+
+        console.print()
 
 
 if __name__ == "__main__":
