@@ -233,6 +233,11 @@ class MainAgent:
             metadata = msg.get("metadata")
             self.session_store.add_message(thread_id, role, content, metadata)
 
+        # 清除 LangGraph checkpointer 的状态（下次 chat 会从 session_store 恢复）
+        config = {"configurable": {"thread_id": thread_id}}
+        if hasattr(self.checkpointer, 'delete_thread'):
+            self.checkpointer.delete_thread(thread_id)
+
         # 刷新 token 计数器
         self.refresh_token_counter(thread_id)
 
