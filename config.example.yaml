@@ -1,0 +1,54 @@
+# AI Project 配置文件示例
+# 复制此文件为 config.yaml 并填入实际值
+
+# ============ LLM 模型配置 ============
+llm:
+  models:
+    # 主模型（默认使用第一个）
+    - name: default
+      model: gpt-4o
+      api_key: sk-xxx
+      base_url: https://api.openai.com/v1
+      temperature: 0.7
+      timeout: 120
+      context_window: 128K      # 支持 K/M 单位，如 200K, 1M
+      max_output_tokens: 8K
+
+    # 可选：添加更多模型
+    # - name: claude
+    #   model: claude-3-opus
+    #   api_key: sk-xxx
+    #   base_url: https://api.anthropic.com/v1
+    #   temperature: 0.7
+    #   timeout: 120
+    #   context_window: 200K
+    #   max_output_tokens: 8K
+
+# ============ Embedding 配置 ============
+embedding:
+  api_key: sk-xxx
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  model: text-embedding-v4
+  dimension: 1536
+
+# ============ Tavily 搜索配置 ============
+tavily:
+  api_key: tvly-xxx
+
+# ============ Firecrawl 配置 ============
+firecrawl:
+  api_key: fc-xxx
+
+# ============ LangSmith 配置（可选）============
+langsmith:
+  api_key: lsv2_pt_xxx
+  tracing: false
+  project: default
+
+# ============ 上下文压缩配置 ============
+compact:
+  auto_enabled: true        # 是否启用自动压缩
+  threshold_pct: 0.80       # 触发阈值（80% 时触发）
+  keep_recent: 10           # 保留最近消息数
+  buffer_tokens: 10K        # 缓冲区 tokens（支持 K/M 单位）
+  output_reserve: 8K        # 输出预留 tokens（支持 K/M 单位）

@@ -39,9 +39,28 @@ def _show_history(console: Console, session_store: SessionStore, thread_id: str,
     console.print(f"[dim]历史消息 ({len(messages)} 条):[/dim]\n")
 
     for msg in messages:
-        role = "用户" if msg['role'] == 'user' else "助手"
-        role_color = "blue" if msg['role'] == 'user' else "green"
+        role = msg['role']
         content = msg['content'] or ""
+        metadata = msg.get('metadata') or {}
+
+        # 根据角色设置显示
+        if role == 'user':
+            role_display = "用户"
+            role_color = "blue"
+        elif role == 'tool':
+            # 工具返回消息
+            tool_name = metadata.get('name', 'tool')
+            role_display = f"工具[{tool_name}]"
+            role_color = "yellow"
+        else:
+            # assistant - 检查是否有工具调用
+            tool_calls = metadata.get('tool_calls')
+            if tool_calls:
+                tool_names = [tc.get('name', '?') for tc in tool_calls]
+                role_display = f"助手[调用: {', '.join(tool_names)}]"
+            else:
+                role_display = "助手"
+            role_color = "green"
 
         # 截断显示
         if len(content) > 300:
@@ -53,9 +72,9 @@ def _show_history(console: Console, session_store: SessionStore, thread_id: str,
                 time_str = dt.strftime('%H:%M')
             except:
                 time_str = ""
-            console.print(f"[dim][{time_str}][/dim] [{role_color}]{role}[/{role_color}]: {content}\n")
+            console.print(f"[dim][{time_str}][/dim] [{role_color}]{role_display}[/{role_color}]: {content}\n")
         else:
-            console.print(f"[{role_color}]{role}[/{role_color}]: {content}\n")
+            console.print(f"[{role_color}]{role_display}[/{role_color}]: {content}\n")
 
     return True
 
@@ -96,6 +115,7 @@ async def _run_repl_async():
         "  [cyan]/sessions[/cyan]    - 列出所有会话\n"
         "  [cyan]/resume <id>[/cyan] - 切换到指定会话\n"
         "  [cyan]/history[/cyan]     - 查看当前会话历史\n"
+        "  [cyan]/compact[/cyan]     - 压缩上下文\n"
         "  [cyan]/status[/cyan]      - 查看运行状态\n"
         "  [cyan]/help[/cyan]        - 显示帮助\n"
         "  [cyan]/exit[/cyan]        - 退出\n"
@@ -207,6 +227,7 @@ async def _run_repl_async():
                 "  [cyan]/sessions[/cyan]    - 列出所有会话\n"
                 "  [cyan]/resume <id>[/cyan] - 切换到指定会话\n"
                 "  [cyan]/history[/cyan]     - 查看当前会话历史\n"
+                "  [cyan]/compact[/cyan]     - 压缩上下文\n"
                 "  [cyan]/status[/cyan]      - 查看运行状态\n"
                 "  [cyan]/help[/cyan]        - 显示帮助\n"
                 "  [cyan]/exit[/cyan]        - 退出\n"
@@ -214,7 +235,6 @@ async def _run_repl_async():
                 title="帮助"
             ))
             console.print()
-            continue
             continue
 
         if cmd_lower == "/sessions":
@@ -275,6 +295,34 @@ async def _run_repl_async():
                 console.print("[dim]当前会话没有历史消息[/dim]\n")
             continue
 
+        if cmd_lower == "/compact":
+            # 压缩上下文
+            token_status = agent.get_token_status(thread_id)
+            console.print(f"[dim]压缩前: {token_status['total_tokens']:,} tokens ({token_status['usage_ratio']}%)[/dim]")
+            console.print("[cyan]正在生成摘要...[/cyan]")
+
+            try:
+                result = await agent.compact_session(thread_id, keep_recent=10)
+
+                if result["success"]:
+                    saved = result["tokens_before"] - result["tokens_after"]
+                    console.print(f"\n[bold green]✓ 压缩完成[/bold green]")
+                    console.print(f"  - 移除消息: {result['messages_removed']} 条")
+                    console.print(f"  - 保留消息: {result['messages_kept']} 条")
+                    console.print(f"  - Token: {result['tokens_before']:,} → {result['tokens_after']:,} (节省 {saved:,})")
+                    console.print(f"\n[dim]摘要:[/dim]")
+                    # 显示摘要的前 500 字符
+                    summary = result.get("summary", "")
+                    if len(summary) > 500:
+                        summary = summary[:500] + "..."
+                    console.print(Panel(summary, border_style="dim"))
+                else:
+                    console.print(f"[yellow]{result['message']}[/yellow]\n")
+
+            except Exception as e:
+                console.print(f"[red]压缩失败: {e}[/red]\n")
+            continue
+
         # 调用 Agent（async streaming 模式）
         console.print("\n[bold green]Agent:[/bold green] ")
         accumulated = []
@@ -295,6 +343,12 @@ async def _run_repl_async():
         if is_interrupted():
             console.print("[yellow]\n[执行被中断，已保存部分输出][/yellow]\n")
             clear_interrupt()
+
+        # 显示自动压缩通知
+        auto_compact = result.get("auto_compact")
+        if auto_compact and auto_compact.get("success"):
+            saved = auto_compact["tokens_before"] - auto_compact["tokens_after"]
+            console.print(f"[cyan]📌 上下文已自动压缩: {auto_compact['tokens_before']:,} → {auto_compact['tokens_after']:,} tokens (节省 {saved:,})[/cyan]\n")
 
         # 显示 token 状态警告
         token_status = result.get("token_status", {})

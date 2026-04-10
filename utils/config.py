@@ -174,6 +174,40 @@ class LangSmithSettings:
         return self._data.get("project", "default")
 
 
+class CompactSettings:
+    """上下文压缩配置"""
+    def __init__(self, data: dict):
+        self._data = data.get("compact", {})
+
+    @property
+    def auto_enabled(self) -> bool:
+        """是否启用自动压缩"""
+        return self._data.get("auto_enabled", True)
+
+    @property
+    def threshold_pct(self) -> float:
+        """触发阈值（百分比）"""
+        return self._data.get("threshold_pct", 0.80)
+
+    @property
+    def keep_recent(self) -> int:
+        """保留最近消息数"""
+        return self._data.get("keep_recent", 10)
+
+    @property
+    def buffer_tokens(self) -> int:
+        """缓冲区 tokens（支持 K/M 单位）"""
+        value = self._data.get("buffer_tokens", 10_000)
+        return _parse_token_value(value) or 10_000
+
+    @property
+    def output_reserve(self) -> int:
+        """输出预留 tokens（支持 K/M 单位）"""
+        value = self._data.get("output_reserve", 8_000)
+        return _parse_token_value(value) or 8_000
+        return self._data.get("output_reserve", 8_000)
+
+
 class Settings:
     """应用全局配置"""
 
@@ -184,6 +218,7 @@ class Settings:
         self.tavily = TavilySettings(data)
         self.firecrawl = FirecrawlSettings(data)
         self.langsmith = LangSmithSettings(data)
+        self.compact = CompactSettings(data)
 
 
 # ============ 上下文管理 ============
