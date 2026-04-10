@@ -205,7 +205,24 @@ class CompactSettings:
         """输出预留 tokens（支持 K/M 单位）"""
         value = self._data.get("output_reserve", 8_000)
         return _parse_token_value(value) or 8_000
-        return self._data.get("output_reserve", 8_000)
+
+
+class MCPSettings:
+    """MCP 服务器配置"""
+    def __init__(self, data: dict):
+        self._data = data.get("mcp", {})
+
+    @property
+    def servers(self) -> list[dict]:
+        """获取 MCP 服务器配置列表"""
+        return self._data.get("servers", [])
+
+    def get_server_config(self, name: str) -> dict | None:
+        """获取指定服务器的配置"""
+        for server in self.servers:
+            if server.get("name") == name:
+                return server
+        return None
 
 
 class Settings:
@@ -219,6 +236,7 @@ class Settings:
         self.firecrawl = FirecrawlSettings(data)
         self.langsmith = LangSmithSettings(data)
         self.compact = CompactSettings(data)
+        self.mcp = MCPSettings(data)
 
 
 # ============ 上下文管理 ============

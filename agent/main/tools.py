@@ -23,6 +23,10 @@ def get_main_agent_tools() -> list:
         paper_search, paper_list, paper_stats,
         paper_ingest, paper_ingest_status, paper_ingest_list, paper_ingest_cancel,
     )
+    from tools.mcp import (
+        mcp_list_servers, mcp_connect, mcp_disconnect,
+        mcp_list_tools, mcp_call_tool,
+    )
 
     return [
         # Web 搜索和内容提取
@@ -73,4 +77,10 @@ def get_main_agent_tools() -> list:
         # 文件查找
         glob,
         glob_list,
+        # MCP 工具
+        mcp_list_servers,
+        mcp_connect,
+        mcp_disconnect,
+        mcp_list_tools,
+        mcp_call_tool,
     ]

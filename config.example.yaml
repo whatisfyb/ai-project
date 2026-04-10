@@ -52,3 +52,37 @@ compact:
   keep_recent: 10           # 保留最近消息数
   buffer_tokens: 10K        # 缓冲区 tokens（支持 K/M 单位）
   output_reserve: 8K        # 输出预留 tokens（支持 K/M 单位）
+
+# ============ MCP 服务器配置 ============
+# MCP (Model Context Protocol) 允许连接外部工具服务器
+mcp:
+  servers:
+    # 文件系统工具
+    - name: filesystem
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+      enabled: false
+
+    # GitHub 工具
+    # - name: github
+    #   command: npx
+    #   args: ["-y", "@modelcontextprotocol/server-github"]
+    #   env:
+    #     GITHUB_TOKEN: ghp_xxx
+    #   enabled: true
+
+    # PostgreSQL 数据库工具
+    # - name: postgres
+    #   command: npx
+    #   args: ["-y", "@modelcontextprotocol/server-postgres"]
+    #   env:
+    #     DATABASE_URL: postgresql://user:pass@localhost:5432/db
+    #   enabled: false
+
+    # Brave 搜索工具
+    # - name: brave-search
+    #   command: npx
+    #   args: ["-y", "@modelcontextprotocol/server-brave-search"]
+    #   env:
+    #     BRAVE_API_KEY: xxx
+    #   enabled: false

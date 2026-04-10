@@ -106,6 +106,17 @@ async def _run_repl_async():
     agent = create_main_agent()
     session_store = SessionStore()
 
+    # 初始化 MCP 服务器
+    try:
+        from tools.mcp import init_mcp_from_config, get_mcp_manager
+        init_mcp_from_config()
+        manager = get_mcp_manager()
+        servers = manager.list_servers()
+        if servers:
+            console.print(f"[dim]已连接 {len(servers)} 个 MCP 服务器[/dim]\n")
+    except Exception as e:
+        console.print(f"[dim]MCP 初始化: {e}[/dim]\n")
+
     console.print(Panel.fit(
         "[bold green]Main Agent 已启动[/bold green]\n"
         "输入消息与 Agent 对话\n\n"
