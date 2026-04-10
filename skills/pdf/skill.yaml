@@ -1,0 +1,19 @@
+name: pdf
+description: 读取和解析 PDF 文件内容
+version: "1.0.0"
+author: user
+parameters:
+  - name: file_path
+    type: string
+    description: PDF 文件路径
+    required: true
+  - name: action
+    type: string
+    description: 操作类型 - read(读取全文), sections(提取章节), summarize(生成摘要)
+    required: false
+    default: read
+  - name: max_pages
+    type: integer
+    description: 最大读取页数（0 表示不限制）
+    required: false
+    default: 0
