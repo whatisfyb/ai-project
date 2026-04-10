@@ -19,6 +19,47 @@ from store.session import SessionStore
 _repl_interrupted = False
 
 
+def _show_history(console: Console, session_store: SessionStore, thread_id: str, show_timestamp: bool = False):
+    """显示会话历史消息
+
+    Args:
+        console: Rich Console
+        session_store: 会话存储
+        thread_id: 会话 ID
+        show_timestamp: 是否显示时间戳
+    """
+    messages = session_store.get_messages(thread_id)
+    if not messages:
+        return False
+
+    session = session_store.get_session(thread_id)
+    session_title = session.get("title", thread_id) if session else thread_id
+
+    console.print(f"\n[bold green]会话: {session_title}[/bold green]")
+    console.print(f"[dim]历史消息 ({len(messages)} 条):[/dim]\n")
+
+    for msg in messages:
+        role = "用户" if msg['role'] == 'user' else "助手"
+        role_color = "blue" if msg['role'] == 'user' else "green"
+        content = msg['content'] or ""
+
+        # 截断显示
+        if len(content) > 300:
+            content = content[:300] + "..."
+
+        if show_timestamp:
+            try:
+                dt = __import__('datetime').datetime.fromisoformat(msg['timestamp'])
+                time_str = dt.strftime('%H:%M')
+            except:
+                time_str = ""
+            console.print(f"[dim][{time_str}][/dim] [{role_color}]{role}[/{role_color}]: {content}\n")
+        else:
+            console.print(f"[{role_color}]{role}[/{role_color}]: {content}\n")
+
+    return True
+
+
 def run_repl():
     """运行 REPL 交互（同步入口，内部启动 async 循环）"""
     global _repl_interrupted
@@ -50,19 +91,28 @@ async def _run_repl_async():
         "[bold green]Main Agent 已启动[/bold green]\n"
         "输入消息与 Agent 对话\n\n"
         "[dim]命令：[/dim]\n"
-        "  [cyan]/new[/cyan]       - 创建新会话\n"
-        "  [cyan]/exit[/cyan]      - 退出\n"
-        "  [cyan]/status[/cyan]    - 查看状态\n"
-        "  [cyan]/sessions[/cyan]  - 列出所有会话\n"
+        "  [cyan]/new[/cyan]         - 创建并进入新会话\n"
+        "  [cyan]/delete <id>[/cyan] - 删除指定会话\n"
+        "  [cyan]/sessions[/cyan]    - 列出所有会话\n"
         "  [cyan]/resume <id>[/cyan] - 切换到指定会话\n"
-        "  [cyan]/history[/cyan]   - 查看当前会话历史\n"
-        "  [cyan]Ctrl+C[/cyan]     - 终止当前任务",
+        "  [cyan]/history[/cyan]     - 查看当前会话历史\n"
+        "  [cyan]/status[/cyan]      - 查看运行状态\n"
+        "  [cyan]/help[/cyan]        - 显示帮助\n"
+        "  [cyan]/exit[/cyan]        - 退出\n"
+        "  [cyan]Ctrl+C[/cyan]       - 终止当前任务",
         title="Main Agent"
     ))
 
-    # 启动时创建新会话
-    thread_id = f"session_{int(__import__('time').time())}"
-    session_store.create_session(thread_id)
+    # 启动时进入最后一次会话（如果没有则创建新会话）
+    sessions = session_store.list_sessions(limit=1)
+    if sessions:
+        thread_id = sessions[0]['session_id']
+        agent.refresh_token_counter(thread_id)
+        _show_history(console, session_store, thread_id, show_timestamp=False)
+    else:
+        thread_id = f"session_{int(__import__('time').time())}"
+        session_store.create_session(thread_id)
+        console.print("[dim]已创建新会话[/dim]\n")
 
     while True:
         # 检查是否被中断
@@ -78,14 +128,18 @@ async def _run_repl_async():
                 console.print("[dim]已取消输入[/dim]\n")
             continue
 
-        # 显示当前会话
+        # 显示当前会话和 token 状态
         current_session = session_store.get_session(thread_id)
         session_title = current_session.get("title", thread_id) if current_session else thread_id
+
+        # 获取 token 状态
+        token_status = agent.get_token_status(thread_id)
+        token_info = f"[dim]({token_status['usage_ratio']}%)[/dim]"
 
         # 异步等待用户输入（使用 asyncio.to_thread 避免阻塞事件循环）
         try:
             user_input = await asyncio.to_thread(
-                lambda: console.input(f"[bold blue]You[/bold blue] [dim]({session_title})[/dim]: ").strip()
+                lambda: console.input(f"[bold blue]You[/bold blue] [dim]({session_title})[/dim] {token_info}: ").strip()
             )
         except (KeyboardInterrupt, EOFError):
             # Ctrl+C 或 Ctrl+D 在等待输入时
@@ -108,7 +162,31 @@ async def _run_repl_async():
         if cmd_lower == "/new":
             thread_id = f"session_{int(__import__('time').time())}"
             session_store.create_session(thread_id)
-            console.print("[bold green]已创建新会话[/bold green]\n")
+            # 重置 token 计数器
+            agent.refresh_token_counter(thread_id)
+            console.print("[bold green]已创建并进入新会话[/bold green]\n")
+            continue
+
+        if cmd_lower.startswith("/delete"):
+            parts = user_input.split(maxsplit=1)
+            if len(parts) < 2:
+                console.print("[red]用法: /delete <session_id>[/red]\n")
+                continue
+
+            del_session_id = parts[1].strip()
+
+            # 不能删除当前会话
+            if del_session_id == thread_id:
+                console.print("[red]不能删除当前会话，请先切换到其他会话[/red]\n")
+                continue
+
+            session = session_store.get_session(del_session_id)
+            if not session:
+                console.print(f"[red]会话不存在: {del_session_id}[/red]\n")
+                continue
+
+            session_store.delete_session(del_session_id)
+            console.print(f"[yellow]已删除会话: {session['title']}[/yellow]\n")
             continue
 
         if cmd_lower == "/status":
@@ -118,6 +196,25 @@ async def _run_repl_async():
                 console.print(f"[cyan]正在运行的任务: {plan_ids}[/cyan]\n")
             else:
                 console.print("[dim]没有正在运行的任务[/dim]\n")
+            continue
+
+        if cmd_lower == "/help":
+            console.print(Panel.fit(
+                "[bold green]Main Agent 帮助[/bold green]\n\n"
+                "[dim]命令：[/dim]\n"
+                "  [cyan]/new[/cyan]         - 创建并进入新会话\n"
+                "  [cyan]/delete <id>[/cyan] - 删除指定会话\n"
+                "  [cyan]/sessions[/cyan]    - 列出所有会话\n"
+                "  [cyan]/resume <id>[/cyan] - 切换到指定会话\n"
+                "  [cyan]/history[/cyan]     - 查看当前会话历史\n"
+                "  [cyan]/status[/cyan]      - 查看运行状态\n"
+                "  [cyan]/help[/cyan]        - 显示帮助\n"
+                "  [cyan]/exit[/cyan]        - 退出\n"
+                "  [cyan]Ctrl+C[/cyan]       - 终止当前任务",
+                title="帮助"
+            ))
+            console.print()
+            continue
             continue
 
         if cmd_lower == "/sessions":
@@ -166,47 +263,16 @@ async def _run_repl_async():
                 continue
 
             thread_id = new_session_id
+            agent.refresh_token_counter(thread_id)
 
-            # 回放历史对话
-            messages = session_store.get_messages(thread_id)
-            if messages:
-                console.print(f"\n[bold green]已切换到会话: {session['title']}[/bold green]")
-                console.print(f"[dim]历史消息 ({len(messages)} 条):[/dim]\n")
-
-                for msg in messages:
-                    role = "用户" if msg['role'] == 'user' else "助手"
-                    role_color = "blue" if msg['role'] == 'user' else "green"
-                    content = msg['content'] or ""
-                    # 截断显示
-                    if len(content) > 300:
-                        content = content[:300] + "..."
-
-                    console.print(f"[{role_color}]{role}[/{role_color}]: {content}\n")
-            else:
+            # 显示历史消息
+            if not _show_history(console, session_store, thread_id, show_timestamp=False):
                 console.print(f"[bold green]已切换到会话: {session['title']}[/bold green] (无历史消息)\n")
             continue
 
         if cmd_lower == "/history":
-            messages = session_store.get_messages(thread_id)
-            if not messages:
+            if not _show_history(console, session_store, thread_id, show_timestamp=True):
                 console.print("[dim]当前会话没有历史消息[/dim]\n")
-                continue
-
-            console.print(f"\n[bold]当前会话历史 ({len(messages)} 条消息):[/bold]\n")
-
-            for msg in messages:
-                role = "用户" if msg['role'] == 'user' else "助手"
-                role_color = "blue" if msg['role'] == 'user' else "green"
-                content = msg['content'] or ""
-
-                # 时间
-                try:
-                    dt = __import__('datetime').datetime.fromisoformat(msg['timestamp'])
-                    time_str = dt.strftime('%H:%M')
-                except:
-                    time_str = ""
-
-                console.print(f"[dim][{time_str}][/dim] [{role_color}]{role}[/{role_color}]: {content}\n")
             continue
 
         # 调用 Agent（async streaming 模式）
@@ -229,6 +295,15 @@ async def _run_repl_async():
         if is_interrupted():
             console.print("[yellow]\n[执行被中断，已保存部分输出][/yellow]\n")
             clear_interrupt()
+
+        # 显示 token 状态警告
+        token_status = result.get("token_status", {})
+        if token_status.get("is_near_limit"):
+            usage_ratio = token_status.get("usage_ratio", 0)
+            remaining = token_status.get("remaining_tokens", 0)
+            console.print(f"[yellow]⚠️ 上下文接近上限 ({usage_ratio}%, 剩余 {remaining:,} tokens)[/yellow]\n")
+        elif token_status.get("is_over_limit"):
+            console.print(f"[red]⚠️ 上下文已超出限制，请考虑开始新会话[/red]\n")
 
         console.print()
 

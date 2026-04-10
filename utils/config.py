@@ -7,6 +7,36 @@ from typing import Any
 import yaml
 
 
+def _parse_token_value(value: int | str | None) -> int | None:
+    """解析 token 值，支持 K/M 单位
+
+    Examples:
+        "200K" -> 200000
+        "1M" -> 1000000
+        128000 -> 128000
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, int):
+        return value
+
+    if isinstance(value, str):
+        value = value.strip().upper()
+        multipliers = {
+            "K": 1000,
+            "M": 1000000,
+        }
+        for suffix, mult in multipliers.items():
+            if value.endswith(suffix):
+                num = float(value[:-1])
+                return int(num * mult)
+        # 尝试直接解析为数字
+        return int(value)
+
+    return None
+
+
 def _get_config_path() -> Path:
     """获取 config.yaml 路径"""
     config_file = Path("config.yaml")
@@ -48,8 +78,8 @@ class SingleLLMConfig:
         base_url: str = ...,
         temperature: float = 0.7,
         timeout: int = 120,
-        context_window: int | None = None,
-        max_output_tokens: int | None = None,
+        context_window: int | str | None = None,
+        max_output_tokens: int | str | None = None,
     ):
         self.name = name
         self.model = model
@@ -57,8 +87,8 @@ class SingleLLMConfig:
         self.base_url = base_url
         self.temperature = temperature
         self.timeout = timeout
-        self._context_window = context_window
-        self._max_output_tokens = max_output_tokens
+        self._context_window = _parse_token_value(context_window)
+        self._max_output_tokens = _parse_token_value(max_output_tokens)
 
     @property
     def context_window(self) -> int:

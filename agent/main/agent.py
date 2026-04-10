@@ -9,6 +9,8 @@ from langgraph.graph import StateGraph, END, START
 from langgraph.prebuilt import ToolNode
 
 from utils.llm import get_llm_model
+from utils.config import get_default_model_config
+from utils.token_counter import TokenCounter, count_messages_tokens
 from agent.core.models import MainAgentState
 from agent.core.signals import is_interrupted
 from agent.main.tools import get_main_agent_tools
@@ -29,11 +31,24 @@ class MainAgent:
     - 整合结果并生成响应
     """
 
-    def __init__(self):
+    def __init__(self, context_window: int | None = None):
+        """初始化 Main Agent
+
+        Args:
+            context_window: 模型上下文窗口大小（token 数），不填则从配置读取
+        """
         self.llm = get_llm_model()
+
+        # 从配置读取 context_window
+        if context_window is None:
+            model_config = get_default_model_config()
+            context_window = model_config.context_window
+
+        self.context_window = context_window
         self._init_tools()
         self._graph = None
         self._checkpointer = None
+        self._token_counters: dict[str, TokenCounter] = {}  # thread_id -> TokenCounter
 
     def _init_tools(self):
         """初始化工具"""
@@ -131,6 +146,40 @@ class MainAgent:
             self._session_store = SessionStore()
         return self._session_store
 
+    def get_token_counter(self, thread_id: str) -> TokenCounter:
+        """获取会话的 TokenCounter（从历史消息计算上下文 token）"""
+        if thread_id not in self._token_counters:
+            counter = TokenCounter(
+                context_window=self.context_window,
+                warning_threshold=0.8,
+            )
+            self._token_counters[thread_id] = counter
+        return self._token_counters[thread_id]
+
+    def refresh_token_counter(self, thread_id: str) -> TokenCounter:
+        """刷新会话的 TokenCounter（根据历史消息重新计算）"""
+        counter = self.get_token_counter(thread_id)
+        counter.reset()
+
+        # 从历史消息计算 token
+        history = self.session_store.get_messages(thread_id)
+        if history:
+            for msg in history:
+                content = msg.get("content") or ""
+                if content:
+                    counter.add_message(content)
+
+        return counter
+
+    def get_token_status(self, thread_id: str = "default") -> dict:
+        """获取会话的 token 状态
+
+        Returns:
+            包含 token 统计信息的字典
+        """
+        counter = self.get_token_counter(thread_id)
+        return counter.get_status()
+
     async def chat_async(self, message: str, thread_id: str = "default", on_token=None) -> dict[str, Any]:
         """与 Main Agent 对话（streaming 模式）
 
@@ -140,7 +189,7 @@ class MainAgent:
             on_token: 回调函数，每收到一个 token 就调用 on_token(token)
 
         Returns:
-            响应结果，包含 messages
+            响应结果，包含 messages 和 token_status
         """
         # 设置当前 thread_id 到 context（供工具调用时使用）
         _current_thread_id.set(thread_id)
@@ -150,8 +199,15 @@ class MainAgent:
         # 确保会话存在
         self.session_store.get_or_create_session(thread_id)
 
+        # 刷新 token 计数器（从历史消息重新计算）
+        token_counter = self.refresh_token_counter(thread_id)
+
         # 记录对话前的消息数量（用于后续同步）
         pre_msg_count = len(self.session_store.get_messages(thread_id))
+
+        # 计算输入消息的 token 并添加到计数器
+        input_tokens = count_messages_tokens([HumanMessage(content=message)])
+        token_counter.add_message(message)
 
         # 从 checkpointer 获取历史消息
         config = {"configurable": {"thread_id": thread_id}}
@@ -221,11 +277,16 @@ class MainAgent:
                         new_messages = final_messages[pre_msg_count:]
                         if new_messages:
                             self.session_store.add_messages_batch(thread_id, new_messages)
+                            output_tokens = count_messages_tokens(new_messages)
+                            token_counter.add_messages(new_messages)
                         existing_messages = list(final_messages)
                     existing_messages.append(
                         AIMessage(content="[系统消息] 用户中断了执行。")
                     )
-                    return {"messages": existing_messages}
+                    return {
+                        "messages": existing_messages,
+                        "token_status": token_counter.get_status(),
+                    }
 
                 # version="v2" 返回 dict 格式: {"type": ..., "data": ..., "ns": ...}
                 if chunk.get("type") == "messages":
@@ -258,10 +319,19 @@ class MainAgent:
             new_messages = final_messages[pre_msg_count:]
             if new_messages:
                 self.session_store.add_messages_batch(thread_id, new_messages)
+                # 计算输出消息的 token
+                output_tokens = count_messages_tokens(new_messages)
+                token_counter.add_messages(new_messages)
             # 更新 existing_messages 用于返回
             existing_messages = list(final_messages)
 
-        return {"messages": existing_messages}
+        # 更新 session_store 的 token 统计
+        self.session_store.update_session_tokens(thread_id, token_counter.total_tokens)
+
+        return {
+            "messages": existing_messages,
+            "token_status": token_counter.get_status(),
+        }
 
     def chat(self, message: str, thread_id: str = "default") -> dict[str, Any]:
         """与 Main Agent 对话（兼容模式，内部调用 async 版本）

@@ -60,6 +60,12 @@ class SessionStore:
                 ON messages(session_id, timestamp)
             """)
 
+            # 添加 total_tokens 列（如果不存在）
+            try:
+                conn.execute("ALTER TABLE session_metadata ADD COLUMN total_tokens INTEGER DEFAULT 0")
+            except sqlite3.OperationalError:
+                pass  # 列已存在
+
             conn.commit()
 
     # ============ 会话管理 ============
@@ -73,8 +79,8 @@ class SessionStore:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
-                INSERT OR IGNORE INTO session_metadata (session_id, title, created_at, updated_at, message_count)
-                VALUES (?, ?, ?, ?, 0)
+                INSERT OR IGNORE INTO session_metadata (session_id, title, created_at, updated_at, message_count, total_tokens)
+                VALUES (?, ?, ?, ?, 0, 0)
                 """,
                 (session_id, title, now, now)
             )
@@ -86,6 +92,7 @@ class SessionStore:
             "created_at": now,
             "updated_at": now,
             "message_count": 0,
+            "total_tokens": 0,
         }
 
     def get_session(self, session_id: str) -> dict[str, Any] | None:
@@ -93,7 +100,7 @@ class SessionStore:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 """
-                SELECT session_id, title, created_at, updated_at, message_count
+                SELECT session_id, title, created_at, updated_at, message_count, total_tokens
                 FROM session_metadata WHERE session_id = ?
                 """,
                 (session_id,)
@@ -106,6 +113,7 @@ class SessionStore:
                     "created_at": row[2],
                     "updated_at": row[3],
                     "message_count": row[4],
+                    "total_tokens": row[5] if row[5] is not None else 0,
                 }
         return None
 
@@ -114,7 +122,7 @@ class SessionStore:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
                 """
-                SELECT session_id, title, created_at, updated_at, message_count
+                SELECT session_id, title, created_at, updated_at, message_count, total_tokens
                 FROM session_metadata
                 ORDER BY updated_at DESC
                 LIMIT ?
@@ -129,6 +137,7 @@ class SessionStore:
                     "created_at": row[2],
                     "updated_at": row[3],
                     "message_count": row[4],
+                    "total_tokens": row[5] if row[5] is not None else 0,
                 })
             return sessions
 
@@ -153,6 +162,58 @@ class SessionStore:
             conn.execute("DELETE FROM session_metadata WHERE session_id = ?", (session_id,))
             conn.commit()
         return True
+
+    def update_session_tokens(self, session_id: str, total_tokens: int) -> bool:
+        """更新会话的 token 统计
+
+        Args:
+            session_id: 会话 ID
+            total_tokens: 总 token 数
+
+        Returns:
+            是否成功
+        """
+        now = datetime.now().isoformat()
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute(
+                """
+                UPDATE session_metadata SET total_tokens = ?, updated_at = ?
+                WHERE session_id = ?
+                """,
+                (total_tokens, now, session_id)
+            )
+            conn.commit()
+        return True
+
+    def add_tokens(self, session_id: str, tokens: int) -> int:
+        """向会话添加 token 数
+
+        Args:
+            session_id: 会话 ID
+            tokens: 要添加的 token 数
+
+        Returns:
+            更新后的总 token 数
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.execute(
+                """
+                UPDATE session_metadata
+                SET total_tokens = COALESCE(total_tokens, 0) + ?,
+                    updated_at = ?
+                WHERE session_id = ?
+                """,
+                (tokens, datetime.now().isoformat(), session_id)
+            )
+            conn.commit()
+
+            # 获取更新后的值
+            cursor = conn.execute(
+                "SELECT total_tokens FROM session_metadata WHERE session_id = ?",
+                (session_id,)
+            )
+            row = cursor.fetchone()
+            return row[0] if row else 0
 
     # ============ 消息管理 ============
 
