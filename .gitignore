@@ -3,6 +3,12 @@
 .env.local
 .env.*.local
 
+# Config (contains sensitive info)
+config.yaml
+
+# Documents (user files)
+docs/
+
 # Virtual environment
 .venv/
 venv/

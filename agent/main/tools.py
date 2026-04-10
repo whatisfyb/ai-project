@@ -19,6 +19,10 @@ def get_main_agent_tools() -> list:
     from tools.edit import edit, edit_regex
     from tools.bash import bash, bash_script
     from tools.glob import glob, glob_list
+    from tools.rag import (
+        paper_search, paper_list, paper_stats,
+        paper_ingest, paper_ingest_status, paper_ingest_list, paper_ingest_cancel,
+    )
 
     return [
         # Web 搜索和内容提取
@@ -31,6 +35,15 @@ def get_main_agent_tools() -> list:
         arxiv_search,
         arxiv_get_by_id,
         arxiv_download_pdf,
+        # 论文知识库 RAG
+        paper_search,
+        paper_list,
+        paper_stats,
+        # 论文入库
+        paper_ingest,
+        paper_ingest_status,
+        paper_ingest_list,
+        paper_ingest_cancel,
         # 子代理
         dispatch_agent,
         list_subagents,

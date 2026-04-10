@@ -1,13 +1,16 @@
 """Structure-aware text chunking (Stage 1 of the pipeline)."""
 
 import re
-from typing import Optional
+from typing import Optional, Literal
 
 from utils.chunk_model import Chunk, ChunkType
 from utils.chunk_config import StructureChunkConfig
 
-# Heading patterns, ordered by priority
-HEADING_PATTERNS = [
+
+# ============ 标题模式定义 ============
+
+# 通用标题模式（原版）
+GENERAL_HEADING_PATTERNS = [
     # Chapter: 第一章, 第2章
     re.compile(r"^(第[一二三四五六七八九十百\d]+[章篇])\s*(.*)"),
     # Numbered: 1.1, 1.2.3, Section 2
@@ -18,6 +21,23 @@ HEADING_PATTERNS = [
     re.compile(r"^([^。！？.!?]{3,30})$"),
 ]
 
+# 学术论文章节模式
+PAPER_HEADING_PATTERNS = [
+    # 带编号的英文章节: 1 Introduction, 2.1 Related Work
+    re.compile(r"^(\d+(?:\.\d+)?)\s+([A-Z][a-zA-Z\s]{2,40})$"),
+    # 标准英文章节名（独立行）
+    re.compile(r"^(Abstract|Introduction|Related\s+Work|Background|Method|Methods|Methodology|"
+               r"Experiments|Experimental\s+Setup|Results|Discussion|Conclusion|Conclusions|"
+               r"References|Appendix|Acknowledgments|Acknowledgements)$", re.I),
+    # 中文章节名
+    re.compile(r"^(摘要|引言|相关工作|背景|方法|实验|实验设置|结果|讨论|结论|参考文献|附录|致谢)$"),
+    # References / 参考文献 后面可能带编号
+    re.compile(r"^(References|参考文献)\s*\d*$", re.I),
+]
+
+# 合并所有模式
+ALL_HEADING_PATTERNS = PAPER_HEADING_PATTERNS + GENERAL_HEADING_PATTERNS
+
 # Table detection: pipe-separated or aligned columns
 TABLE_PATTERN = re.compile(r"(?:\|[^|]*\|\n?){2,}")
 
@@ -26,10 +46,29 @@ CODE_FENCE_PATTERN = re.compile(r"```[\s\S]*?```")
 
 
 class StructureChunker:
-    """Splits text into chunks respecting natural document structure."""
+    """Splits text into chunks respecting natural document structure.
 
-    def __init__(self, config: Optional[StructureChunkConfig] = None):
+    Supports different document types via mode parameter:
+    - "general": Default mode for general documents
+    - "paper": Academic paper mode with section detection
+    - "all": Use all patterns combined
+    """
+
+    def __init__(
+        self,
+        config: Optional[StructureChunkConfig] = None,
+        mode: Literal["general", "paper", "all"] = "general",
+    ):
         self.config = config or StructureChunkConfig()
+        self.mode = mode
+
+        # 选择标题模式
+        if mode == "paper":
+            self.heading_patterns = PAPER_HEADING_PATTERNS
+        elif mode == "all":
+            self.heading_patterns = ALL_HEADING_PATTERNS
+        else:
+            self.heading_patterns = GENERAL_HEADING_PATTERNS
 
     def chunk(self, text: str) -> list[Chunk]:
         """Split text into structurally-aware chunks.
@@ -163,7 +202,7 @@ class StructureChunker:
             return False
         if stripped.startswith("```") or stripped.startswith("|"):
             return False
-        return any(p.match(stripped) for p in HEADING_PATTERNS)
+        return any(p.match(stripped) for p in self.heading_patterns)
 
     def _is_table(self, text: str) -> bool:
         """Check if text contains a table pattern."""
