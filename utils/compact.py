@@ -12,7 +12,11 @@ from utils.token_counter import count_messages_tokens
 
 
 # 压缩提示词
-COMPACT_PROMPT = """Your task is to create a detailed summary of the conversation so far.
+COMPACT_PROMPT = """CRITICAL: Respond with TEXT ONLY. Do NOT call any tools.
+
+Your task is to create a detailed summary of the conversation so far.
+
+Before providing your summary, wrap your analysis in <analysis> tags to organize your thoughts.
 
 Your summary should include the following sections:
 
@@ -20,19 +24,68 @@ Your summary should include the following sections:
 2. Key Technical Concepts: List important technical concepts, technologies, and frameworks discussed
 3. Files and Code Sections: Enumerate specific files and code sections examined, modified, or created
 4. Errors and Fixes: List all errors encountered and how they were fixed
-5. Pending Tasks: Outline any pending tasks
-6. Current Work: Describe what was being worked on most recently
+5. All User Messages: List ALL user messages (not tool results) - this is critical for understanding user intent
+6. Pending Tasks: Outline any pending tasks
+7. Current Work: Describe precisely what was being worked on immediately before this summary
 
-Please provide your summary in a clear, structured format. Focus on technical details that would be essential for continuing the work without losing context.
+IMPORTANT - Anti-hallucination rules:
+- Include direct quotes from the conversation showing exactly what task was being worked on
+- If you're uncertain about something, say so instead of guessing
+- Include actual error messages verbatim, don't paraphrase
+- Include actual file paths and code snippets, don't approximate
 
-Respond with TEXT ONLY. Do NOT call any tools."""
+Here's an example of how your output should be structured:
+
+<example>
+<analysis>
+[Your thought process, ensuring all points are covered thoroughly and accurately]
+</analysis>
+
+<summary>
+1. Primary Request and Intent:
+   [Detailed description with user's exact words where relevant]
+
+2. Key Technical Concepts:
+   - [Concept 1]
+   - [Concept 2]
+
+3. Files and Code Sections:
+   - [File Name 1]
+      - [Why this file is important]
+      - [Actual code snippet]
+   - [File Name 2]
+      - [Actual code snippet]
+
+4. Errors and fixes:
+   - [Exact error message]:
+     - [How it was fixed]
+
+5. All User Messages:
+   - "[User message 1]"
+   - "[User message 2]"
+
+6. Pending Tasks:
+   - [Task 1]
+
+7. Current Work:
+   [Precise description with direct quotes showing where we left off]
+
+</summary>
+</example>
+
+Please provide your summary following this structure. Respond with TEXT ONLY."""
 
 # 压缩后的用户提示
 COMPACT_USER_PROMPT = """This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
 
 {summary}
 
-Recent messages are preserved verbatim. Continue from where the conversation left off."""
+Recent messages are preserved verbatim. Continue from where the conversation left off.
+
+IMPORTANT:
+- Do not assume anything not in the summary or recent messages
+- If you're uncertain about previous context, ask the user
+- Verify any claims before acting on them"""
 
 
 def group_messages_by_round(messages: list[dict]) -> list[list[dict]]:
@@ -169,6 +222,36 @@ async def generate_summary(
     return response.content
 
 
+def format_compact_summary(summary: str) -> str:
+    """格式化压缩摘要
+
+    去掉 <analysis> 标签（思考草稿），保留 <summary> 内容
+
+    Args:
+        summary: 原始摘要文本
+
+    Returns:
+        格式化后的摘要
+    """
+    import re
+
+    formatted = summary
+
+    # 去掉 analysis 部分（思考草稿，最终摘要不需要）
+    formatted = re.sub(r'<analysis>[\s\S]*?</analysis>', '', formatted)
+
+    # 提取并格式化 summary 部分
+    summary_match = re.search(r'<summary>([\s\S]*?)</summary>', formatted)
+    if summary_match:
+        content = summary_match.group(1) or ''
+        formatted = f"Summary:\n{content.strip()}"
+
+    # 清理多余空行
+    formatted = re.sub(r'\n\n+', '\n\n', formatted)
+
+    return formatted.strip()
+
+
 def create_summary_message(summary: str) -> dict:
     """创建摘要消息
 
@@ -178,9 +261,12 @@ def create_summary_message(summary: str) -> dict:
     Returns:
         摘要消息（dict 格式）
     """
+    # 格式化摘要（去掉 analysis 标签）
+    formatted_summary = format_compact_summary(summary)
+
     return {
         'role': 'user',
-        'content': COMPACT_USER_PROMPT.format(summary=summary),
+        'content': COMPACT_USER_PROMPT.format(summary=formatted_summary),
         'metadata': {'is_compact_summary': True},
     }
 
