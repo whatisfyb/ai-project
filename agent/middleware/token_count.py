@@ -3,6 +3,35 @@ from agent.core.models import MainAgentState
 from utils.token_counter import count_messages_tokens, count_tokens
 
 
+def recalculate_session_tokens(thread_id: str) -> int:
+    """重新计算会话的 token 数（启动时调用）
+
+    Args:
+        thread_id: 会话 ID
+
+    Returns:
+        计算后的 token 总数
+    """
+    from store.session import SessionStore
+    from agent.main.prompts import MAIN_AGENT_PROMPT
+
+    session_store = SessionStore()
+    messages = session_store.get_messages(thread_id)
+
+    # 计算 system prompt token
+    system_tokens = count_tokens(MAIN_AGENT_PROMPT)
+
+    # 计算 messages token
+    messages_tokens = count_messages_tokens(messages)
+
+    total_tokens = system_tokens + messages_tokens
+
+    # 更新 session_store
+    session_store.update_session_tokens(thread_id, total_tokens)
+
+    return total_tokens
+
+
 async def token_count_node(state: MainAgentState) -> dict:
     """Token 计量节点 - 统计本次 system prompt + messages 的 token 数，存入 session_store
 

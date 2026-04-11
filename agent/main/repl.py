@@ -138,6 +138,9 @@ async def _run_repl_async():
     sessions = session_store.list_sessions(limit=1)
     if sessions:
         thread_id = sessions[0]['session_id']
+        # 重新计算 token 数（配置可能已变更）
+        from agent.middleware.token_count import recalculate_session_tokens
+        recalculate_session_tokens(thread_id)
         _show_history(console, session_store, thread_id, show_timestamp=False)
     else:
         thread_id = f"session_{int(__import__('time').time())}"
@@ -158,14 +161,24 @@ async def _run_repl_async():
                 console.print("[dim]已取消输入[/dim]\n")
             continue
 
-        # 显示当前会话
+        # 显示当前会话和 token 状态
         current_session = session_store.get_session(thread_id)
         session_title = current_session.get("title", thread_id) if current_session else thread_id
+        total_tokens = current_session.get("total_tokens", 0) if current_session else 0
+
+        # 从配置获取上下文状态
+        from utils.config import get_default_model_config, check_context_status
+        model_config = get_default_model_config()
+        context_status = check_context_status(total_tokens, model_config)
+
+        # 计算用量百分比
+        usage_ratio = round(context_status.percent_used, 1)
+        token_info = f"[dim]({usage_ratio}%)[/dim]"
 
         # 异步等待用户输入（使用 asyncio.to_thread 避免阻塞事件循环）
         try:
             user_input = await asyncio.to_thread(
-                lambda: console.input(f"[bold blue]You[/bold blue] [dim]({session_title})[/dim]: ").strip()
+                lambda: console.input(f"[bold blue]You[/bold blue] [dim]({session_title})[/dim] {token_info}: ").strip()
             )
         except (KeyboardInterrupt, EOFError):
             # Ctrl+C 或 Ctrl+D 在等待输入时
