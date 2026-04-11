@@ -16,7 +16,7 @@ from agent.core.models import MainAgentState
 from agent.core.signals import is_interrupted
 from agent.main.tools import get_main_agent_tools
 from agent.main.prompts import MAIN_AGENT_PROMPT
-from agent.middleware import check_memory_generation_node_async
+from agent.middleware.long_term_memory import load_memory_node, memory_check_node
 from store.session import SessionStore
 
 
@@ -106,49 +106,7 @@ class MainAgent:
 
     # ============ Start Section 节点 ============
 
-    async def _load_memory_node(self, state: MainAgentState) -> dict:
-        """加载记忆节点 - 从长期记忆中加载相关记忆到上下文"""
-        from store.long_term_memory_persistency import get_memory_store, memory_age_days
-
-        store = get_memory_store()
-        memories = store.list()
-
-        if not memories:
-            return {"memory_context": None}
-
-        # 构建记忆上下文
-        memory_lines = []
-        for m in memories[:20]:  # 最多加载 20 条记忆
-            # 获取完整记忆内容
-            full_memory = store.read(m.filename.replace(".md", ""))
-            if full_memory:
-                age = memory_age_days(m.mtime_ms)
-                age_text = "今天" if age == 0 else f"{age}天前"
-                memory_lines.append(
-                    f"- [{m.type}] {m.description} ({age_text}):\n  {full_memory.content}"
-                )
-
-        if memory_lines:
-            memory_context = f"""# 用户记忆
-
-以下是关于用户的长期记忆，请在对话中参考这些信息：
-
-{chr(10).join(memory_lines)}
-
-注意：记忆是时间点快照，可能已过时。涉及代码/文件引用时请验证当前状态。
-"""
-        else:
-            memory_context = None
-
-        return {"memory_context": memory_context}
-
     # ============ Finish Section 节点 ============
-
-    async def _memory_check_node(self, state: MainAgentState) -> dict:
-        """记忆检查节点 - 检查用户输入是否需要保存记忆"""
-        result = await check_memory_generation_node_async(state)
-        # 返回更新后的状态字段
-        return result
 
     def _build_finish_section(self) -> StateGraph:
         """构建 finish_section 子图 - 对话结束后的处理逻辑
@@ -166,7 +124,7 @@ class MainAgent:
         finish_graph = SubStateGraph(MainAgentState)
 
         # 添加节点
-        finish_graph.add_node("memory_check", self._memory_check_node)
+        finish_graph.add_node("memory_check", memory_check_node)
 
         # 定义边
         finish_graph.add_edge(START, "memory_check")
@@ -190,7 +148,7 @@ class MainAgent:
         start_graph = SubStateGraph(MainAgentState)
 
         # 添加节点
-        start_graph.add_node("load_memory", self._load_memory_node)
+        start_graph.add_node("load_memory", load_memory_node)
 
         # 定义边
         start_graph.add_edge(START, "load_memory")
@@ -409,39 +367,6 @@ class MainAgent:
 
         return token_counter.total_tokens >= threshold
 
-    async def _auto_compact_if_needed(
-        self,
-        thread_id: str,
-        on_compact=None,
-    ) -> dict[str, Any] | None:
-        """如果需要则自动压缩
-
-        Args:
-            thread_id: 会话 ID
-            on_compact: 压缩时的回调函数 on_compact(result)
-
-        Returns:
-            压缩结果，如果未压缩则返回 None
-        """
-        token_counter = self.get_token_counter(thread_id)
-
-        if not self._should_auto_compact(token_counter):
-            return None
-
-        settings = get_settings_instance()
-        compact_settings = settings.compact
-
-        # 执行压缩
-        result = await self.compact_session(
-            thread_id,
-            keep_recent=compact_settings.keep_recent,
-        )
-
-        if result["success"] and on_compact:
-            on_compact(result)
-
-        return result
-
     async def chat_async(self, message: str, thread_id: str = "default", on_token=None) -> dict[str, Any]:
         """与 Main Agent 对话（streaming 模式）
 
@@ -609,37 +534,6 @@ class MainAgent:
             result["auto_compact"] = auto_compact_result
 
         return result
-
-    def chat(self, message: str, thread_id: str = "default") -> dict[str, Any]:
-        """与 Main Agent 对话（兼容模式，内部调用 async 版本）
-
-        Args:
-            message: 用户消息
-            thread_id: 会话 ID
-
-        Returns:
-            响应结果
-        """
-        try:
-            loop = asyncio.get_running_loop()
-            # 已经在 running loop 中，创建 task
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(asyncio.run, self.chat_async(message, thread_id))
-                return future.result()
-        except RuntimeError:
-            # 没有 running loop，可以直接用 asyncio.run
-            return asyncio.run(self.chat_async(message, thread_id))
-
-    def get_response(self, result: dict[str, Any]) -> str:
-        """从结果中提取响应文本"""
-        messages = result.get("messages", [])
-        if messages:
-            last = messages[-1]
-            if hasattr(last, "content"):
-                return last.content
-        return ""
-
 
 def create_main_agent() -> MainAgent:
     """创建 Main Agent 实例"""

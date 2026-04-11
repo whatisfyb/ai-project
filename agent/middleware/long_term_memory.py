@@ -1,16 +1,8 @@
-"""长期记忆生成检查节点
-
-检查用户输入是否包含记忆相关关键词，如果包含则异步启动 Memory Agent 分析。
-"""
-
-from __future__ import annotations
-
+"""长期记忆相关节点"""
 import asyncio
-from typing import Any, Annotated
-import operator
+from typing import Any
 
 from langchain_core.messages import HumanMessage
-from typing_extensions import TypedDict
 
 from agent.core.models import MainAgentState
 from agent.subagents.memory_agent import get_memory_agent
@@ -60,103 +52,7 @@ def detect_memory_keywords(text: str) -> tuple[bool, str | None, list[str]]:
     return has_keywords, found_category, found_keywords
 
 
-# ============ 检查节点状态扩展 ============
-
-class MemoryCheckState(TypedDict):
-    """记忆检查状态（扩展 MainAgentState）"""
-    messages: Annotated[list, operator.add]
-    current_task: str | None
-    memory_context: str | None
-    subagent_results: dict[str, Any]
-    # 记忆检查相关
-    memory_checked: bool
-    should_generate_memory: bool
-    keyword_category: str | None
-    keywords_found: list[str]
-    memory_result: dict[str, Any] | None
-
-
 # ============ 检查节点 ============
-
-def check_memory_generation_node(state: MainAgentState) -> dict[str, Any]:
-    """记忆生成检查节点（同步版本）
-
-    作为 Main Agent graph 的一个节点，检查用户输入是否包含记忆关键词。
-    如果包含，异步启动记忆分析 Agent。
-
-    Args:
-        state: MainAgentState 状态
-
-    Returns:
-        更新后的状态
-    """
-    # 从状态中获取用户输入
-    messages = state.get("messages", [])
-    if not messages:
-        return {
-            "memory_checked": True,
-            "should_generate_memory": False,
-            "memory_result": None,
-        }
-
-    # 获取最后一条用户消息
-    user_input = _extract_user_input(messages)
-
-    if not user_input:
-        return {
-            "memory_checked": True,
-            "should_generate_memory": False,
-            "memory_result": None,
-        }
-
-    # 检测关键词
-    has_keywords, category, keywords = detect_memory_keywords(user_input)
-
-    if not has_keywords:
-        return {
-            "memory_checked": True,
-            "should_generate_memory": False,
-            "keyword_category": None,
-            "keywords_found": [],
-            "memory_result": None,
-        }
-
-    # 尝试运行记忆分析
-    try:
-        try:
-            loop = asyncio.get_running_loop()
-            # 已经在异步上下文中，创建任务
-            agent = get_memory_agent()
-            future = asyncio.create_task(agent.run_async(user_input))
-
-            return {
-                "memory_checked": True,
-                "should_generate_memory": True,
-                "keyword_category": category,
-                "keywords_found": keywords,
-                "memory_result": {"status": "pending", "future": future},
-            }
-        except RuntimeError:
-            # 没有运行的事件循环，同步执行
-            agent = get_memory_agent()
-            result = asyncio.run(agent.run_async(user_input))
-
-            return {
-                "memory_checked": True,
-                "should_generate_memory": True,
-                "keyword_category": category,
-                "keywords_found": keywords,
-                "memory_result": result,
-            }
-    except Exception as e:
-        return {
-            "memory_checked": True,
-            "should_generate_memory": True,
-            "keyword_category": category,
-            "keywords_found": keywords,
-            "memory_result": {"success": False, "error": str(e)},
-        }
-
 
 async def check_memory_generation_node_async(state: MainAgentState) -> dict[str, Any]:
     """记忆生成检查节点（异步版本）
@@ -240,6 +136,52 @@ def _extract_user_input(messages: list) -> str:
         elif isinstance(msg, dict) and msg.get("role") == "user":
             return msg.get("content", "")
     return ""
+
+
+# ============ 节点定义 ============
+
+async def load_memory_node(state: MainAgentState) -> dict:
+    """加载记忆节点 - 从长期记忆中加载相关记忆到上下文"""
+    from store.long_term_memory_persistency import get_memory_store, memory_age_days
+
+    store = get_memory_store()
+    memories = store.list()
+
+    if not memories:
+        return {"memory_context": None}
+
+    # 构建记忆上下文
+    memory_lines = []
+    for m in memories[:20]:  # 最多加载 20 条记忆
+        # 获取完整记忆内容
+        full_memory = store.read(m.filename.replace(".md", ""))
+        if full_memory:
+            age = memory_age_days(m.mtime_ms)
+            age_text = "今天" if age == 0 else f"{age}天前"
+            memory_lines.append(
+                f"- [{m.type}] {m.description} ({age_text}):\n  {full_memory.content}"
+            )
+
+    if memory_lines:
+        memory_context = f"""# 用户记忆
+
+以下是关于用户的长期记忆，请在对话中参考这些信息：
+
+{chr(10).join(memory_lines)}
+
+注意：记忆是时间点快照，可能已过时。涉及代码/文件引用时请验证当前状态。
+"""
+    else:
+        memory_context = None
+
+    return {"memory_context": memory_context}
+
+
+async def memory_check_node(state: MainAgentState) -> dict:
+    """记忆检查节点 - 检查用户输入是否需要保存记忆（不阻塞主线程）"""
+    # fire-and-forget，不等待结果
+    asyncio.create_task(check_memory_generation_node_async(state))
+    return {}
 
 
 # ============ 便捷函数 ============
