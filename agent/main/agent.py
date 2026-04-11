@@ -16,6 +16,7 @@ from agent.core.models import MainAgentState
 from agent.core.signals import is_interrupted
 from agent.main.tools import get_main_agent_tools
 from agent.main.prompts import MAIN_AGENT_PROMPT
+from agent.middleware import check_memory_generation_node_async
 from store.session import SessionStore
 
 
@@ -61,9 +62,16 @@ class MainAgent:
         """推理节点 - 分析用户输入并决定下一步"""
         messages = state["messages"]
         current_task = state.get("current_task")
+        memory_context = state.get("memory_context")
 
         # 构建系统提示
-        system_msg = SystemMessage(content=MAIN_AGENT_PROMPT)
+        system_content = MAIN_AGENT_PROMPT
+
+        # 如果有记忆上下文，添加到系统提示
+        if memory_context:
+            system_content = f"{memory_context}\n\n---\n\n{MAIN_AGENT_PROMPT}"
+
+        system_msg = SystemMessage(content=system_content)
 
         # 构建用户消息
         if current_task:
@@ -96,27 +104,147 @@ class MainAgent:
 
         return "end"
 
-    def build_graph(self) -> StateGraph:
-        """构建状态图"""
-        graph = StateGraph(MainAgentState)
+    # ============ Start Section 节点 ============
+
+    async def _load_memory_node(self, state: MainAgentState) -> dict:
+        """加载记忆节点 - 从长期记忆中加载相关记忆到上下文"""
+        from store.long_term_memory_persistency import get_memory_store, memory_age_days
+
+        store = get_memory_store()
+        memories = store.list()
+
+        if not memories:
+            return {"memory_context": None}
+
+        # 构建记忆上下文
+        memory_lines = []
+        for m in memories[:20]:  # 最多加载 20 条记忆
+            # 获取完整记忆内容
+            full_memory = store.read(m.filename.replace(".md", ""))
+            if full_memory:
+                age = memory_age_days(m.mtime_ms)
+                age_text = "今天" if age == 0 else f"{age}天前"
+                memory_lines.append(
+                    f"- [{m.type}] {m.description} ({age_text}):\n  {full_memory.content}"
+                )
+
+        if memory_lines:
+            memory_context = f"""# 用户记忆
+
+以下是关于用户的长期记忆，请在对话中参考这些信息：
+
+{chr(10).join(memory_lines)}
+
+注意：记忆是时间点快照，可能已过时。涉及代码/文件引用时请验证当前状态。
+"""
+        else:
+            memory_context = None
+
+        return {"memory_context": memory_context}
+
+    # ============ Finish Section 节点 ============
+
+    async def _memory_check_node(self, state: MainAgentState) -> dict:
+        """记忆检查节点 - 检查用户输入是否需要保存记忆"""
+        result = await check_memory_generation_node_async(state)
+        # 返回更新后的状态字段
+        return result
+
+    def _build_finish_section(self) -> StateGraph:
+        """构建 finish_section 子图 - 对话结束后的处理逻辑
+
+        当前包含：
+        - memory_check: 检查并保存记忆
+
+        后续可扩展：
+        - 日志记录
+        - 状态清理
+        - 汇总报告
+        """
+        from langgraph.graph import StateGraph as SubStateGraph
+
+        finish_graph = SubStateGraph(MainAgentState)
 
         # 添加节点
+        finish_graph.add_node("memory_check", self._memory_check_node)
+
+        # 定义边
+        finish_graph.add_edge(START, "memory_check")
+        finish_graph.add_edge("memory_check", END)
+
+        return finish_graph
+
+    def _build_start_section(self) -> StateGraph:
+        """构建 start_section 子图 - 对话开始前的处理逻辑
+
+        当前包含：
+        - load_memory: 加载长期记忆到上下文
+
+        后续可扩展：
+        - 权限检查
+        - 会话初始化
+        - 动态工具加载
+        """
+        from langgraph.graph import StateGraph as SubStateGraph
+
+        start_graph = SubStateGraph(MainAgentState)
+
+        # 添加节点
+        start_graph.add_node("load_memory", self._load_memory_node)
+
+        # 定义边
+        start_graph.add_edge(START, "load_memory")
+        start_graph.add_edge("load_memory", END)
+
+        return start_graph
+
+    def build_graph(self) -> StateGraph:
+        """构建状态图
+
+        完整结构：
+
+        START -> start_section -> reason -> (tools or finish_section)
+                                          ↓Yes        ↓No
+                                        reason   finish_section
+                                          ↓             ↓
+                                        ...循环...      END
+
+        start_section:  对话前处理（可扩展）
+        main_loop:      ReAct 循环（reason <-> tools）
+        finish_section: 对话后处理（memory_check 等）
+        """
+        graph = StateGraph(MainAgentState)
+
+        # ============ 构建子图 ============
+        start_section = self._build_start_section().compile()
+        finish_section = self._build_finish_section().compile()
+
+        # ============ 添加节点 ============
+        graph.add_node("start_section", start_section)
         graph.add_node("reason", self._reason_node)
         graph.add_node("tools", ToolNode(self.tools))
+        graph.add_node("finish_section", finish_section)
 
-        # 添加条件边
-        graph.add_edge(START, "reason")
+        # ============ 添加边 ============
+        # START -> start_section -> reason
+        graph.add_edge(START, "start_section")
+        graph.add_edge("start_section", "reason")
+
+        # reason 的条件路由
         graph.add_conditional_edges(
             "reason",
             self._route_decision,
             {
                 "tools": "tools",
-                "end": END,
+                "end": "finish_section",  # 无工具调用进入 finish_section
             },
         )
 
-        # 工具执行后返回推理
+        # tools 执行后返回 reason（ReAct 循环）
         graph.add_edge("tools", "reason")
+
+        # finish_section -> END
+        graph.add_edge("finish_section", END)
 
         return graph
 
