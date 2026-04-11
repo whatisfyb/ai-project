@@ -1,8 +1,7 @@
 """数据模型定义"""
 
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 from typing_extensions import TypedDict
-import operator
 
 from pydantic import BaseModel, Field
 
@@ -31,7 +30,9 @@ class Plan(BaseModel):
 
 class MainAgentState(TypedDict):
     """Main Agent 状态"""
-    messages: Annotated[list[dict], operator.add]  # 消息历史
+    messages: list[dict]  # 消息历史
     current_task: str | None  # 当前任务
     memory_context: str | None  # 记忆上下文
     subagent_results: dict[str, Any]  # 子代理结果
+    thread_id: str  # 会话 ID
+    session_id: str  # 存储会话 ID

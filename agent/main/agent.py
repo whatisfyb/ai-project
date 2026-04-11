@@ -6,17 +6,16 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, SystemMessage
 from langgraph.graph import StateGraph, END, START
-from langgraph.prebuilt import ToolNode
 
 from utils.llm import get_llm_model
 from utils.config import get_default_model_config, get_settings_instance
-from utils.token_counter import TokenCounter, count_messages_tokens
-from utils.compact import compact_messages
 from agent.core.models import MainAgentState
 from agent.core.signals import is_interrupted
 from agent.main.tools import get_main_agent_tools
 from agent.main.prompts import MAIN_AGENT_PROMPT
 from agent.middleware.long_term_memory import load_memory_node, memory_check_node
+from agent.middleware.token_count import token_count_node
+from agent.middleware.context_compact import check_token_node, set_checkpointer
 from store.session import SessionStore
 
 
@@ -50,7 +49,6 @@ class MainAgent:
         self._init_tools()
         self._graph = None
         self._checkpointer = None
-        self._token_counters: dict[str, TokenCounter] = {}  # thread_id -> TokenCounter
 
     def _init_tools(self):
         """初始化工具"""
@@ -83,7 +81,21 @@ class MainAgent:
         # 异步调用 LLM
         response = await self.llm_with_tools.ainvoke(all_messages)
 
-        return {"messages": [response]}
+        return {"messages": messages + [response]}
+
+    async def _tools_node(self, state: MainAgentState) -> dict:
+        """工具执行节点 - 执行工具调用并追加消息"""
+        from langgraph.prebuilt import ToolNode
+
+        tool_node = ToolNode(self.tools)
+        result = await tool_node.ainvoke(state)
+
+        # result 是 {"messages": [tool_messages]}，需要追加到现有消息
+        return {"messages": state["messages"] + result["messages"]}
+
+    async def _check_token_node_wrapper(self, state: MainAgentState) -> dict:
+        """Token 检查节点包装器"""
+        return await check_token_node(state, self.context_window)
 
     def _route_decision(self, state: MainAgentState) -> str:
         """路由决策 - 决定下一步执行什么"""
@@ -125,10 +137,15 @@ class MainAgent:
 
         # 添加节点
         finish_graph.add_node("memory_check", memory_check_node)
+        finish_graph.add_node("token_count", token_count_node)
+        finish_graph.add_node("check_token", self._check_token_node_wrapper)
 
-        # 定义边
+        # 定义边：并行执行 memory_check 和 token_count -> check_token
         finish_graph.add_edge(START, "memory_check")
+        finish_graph.add_edge(START, "token_count")
+        finish_graph.add_edge("token_count", "check_token")
         finish_graph.add_edge("memory_check", END)
+        finish_graph.add_edge("check_token", END)
 
         return finish_graph
 
@@ -180,7 +197,7 @@ class MainAgent:
         # ============ 添加节点 ============
         graph.add_node("start_section", start_section)
         graph.add_node("reason", self._reason_node)
-        graph.add_node("tools", ToolNode(self.tools))
+        graph.add_node("tools", self._tools_node)
         graph.add_node("finish_section", finish_section)
 
         # ============ 添加边 ============
@@ -212,6 +229,7 @@ class MainAgent:
         if self._graph is None:
             graph = self.build_graph()
             self._graph = graph.compile(checkpointer=self.checkpointer)
+            set_checkpointer(self.checkpointer)
         return self._graph
 
     @property
@@ -233,140 +251,6 @@ class MainAgent:
             self._session_store = SessionStore()
         return self._session_store
 
-    def get_token_counter(self, thread_id: str) -> TokenCounter:
-        """获取会话的 TokenCounter（从历史消息计算上下文 token）"""
-        if thread_id not in self._token_counters:
-            counter = TokenCounter(
-                context_window=self.context_window,
-                warning_threshold=0.8,
-            )
-            self._token_counters[thread_id] = counter
-        return self._token_counters[thread_id]
-
-    def refresh_token_counter(self, thread_id: str) -> TokenCounter:
-        """刷新会话的 TokenCounter（根据历史消息重新计算）"""
-        counter = self.get_token_counter(thread_id)
-        counter.reset()
-
-        # 从历史消息计算 token
-        history = self.session_store.get_messages(thread_id)
-        if history:
-            for msg in history:
-                content = msg.get("content") or ""
-                if content:
-                    counter.add_message(content)
-
-        return counter
-
-    def get_token_status(self, thread_id: str = "default") -> dict:
-        """获取会话的 token 状态
-
-        Returns:
-            包含 token 统计信息的字典
-        """
-        counter = self.get_token_counter(thread_id)
-        return counter.get_status()
-
-    async def compact_session(
-        self,
-        thread_id: str,
-        keep_recent: int | None = None,
-    ) -> dict[str, Any]:
-        """压缩会话上下文
-
-        Args:
-            thread_id: 会话 ID
-            keep_recent: 保留最近 N 条消息（None 则从配置读取）
-
-        Returns:
-            压缩结果，包含摘要和 token 统计
-        """
-        # 获取当前消息
-        messages = self.session_store.get_messages(thread_id)
-
-        # 从配置读取 keep_recent
-        if keep_recent is None:
-            settings = get_settings_instance()
-            keep_recent = settings.compact.keep_recent
-
-        # 确保 keep_recent 不超过消息数的一半，且至少保留 2 条
-        keep_recent = min(keep_recent, max(2, len(messages) // 2))
-
-        if len(messages) <= keep_recent:
-            return {
-                "success": False,
-                "message": f"消息数量不足 (当前 {len(messages)} 条，需要 > {keep_recent} 条)",
-                "tokens_before": count_messages_tokens(messages),
-                "tokens_after": count_messages_tokens(messages),
-            }
-
-        # 执行压缩
-        result = await compact_messages(messages, keep_recent, self.llm)
-
-        if result["messages_removed"] == 0:
-            return {
-                "success": False,
-                "message": "消息数量不足，无需压缩",
-                "tokens_before": result["tokens_before"],
-                "tokens_after": result["tokens_after"],
-            }
-
-        # 更新 session_store：清空旧消息，添加压缩后的消息
-        self.session_store.clear_messages(thread_id)
-        for msg in result["compact_messages"]:
-            role = msg["role"]
-            content = msg.get("content", "")
-            metadata = msg.get("metadata")
-            self.session_store.add_message(thread_id, role, content, metadata)
-
-        # 清除 LangGraph checkpointer 的状态（下次 chat 会从 session_store 恢复）
-        config = {"configurable": {"thread_id": thread_id}}
-        if hasattr(self.checkpointer, 'delete_thread'):
-            self.checkpointer.delete_thread(thread_id)
-
-        # 刷新 token 计数器
-        self.refresh_token_counter(thread_id)
-
-        return {
-            "success": True,
-            "summary": result["summary"],
-            "tokens_before": result["tokens_before"],
-            "tokens_after": result["tokens_after"],
-            "messages_removed": result["messages_removed"],
-            "messages_kept": len(result["compact_messages"]),
-        }
-
-    def _should_auto_compact(self, token_counter: TokenCounter) -> bool:
-        """检查是否需要自动压缩
-
-        Args:
-            token_counter: Token 计数器
-
-        Returns:
-            是否需要压缩
-        """
-        settings = get_settings_instance()
-        compact_settings = settings.compact
-
-        if not compact_settings.auto_enabled:
-            return False
-
-        # 计算有效上下文窗口
-        # 确保 buffer 和 reserve 不超过 context_window
-        buffer = min(compact_settings.buffer_tokens, self.context_window // 4)
-        output_reserve = min(compact_settings.output_reserve, self.context_window // 4)
-
-        effective_window = self.context_window - output_reserve - buffer
-
-        # 确保有效窗口为正数
-        if effective_window <= 0:
-            effective_window = self.context_window // 2
-
-        # 计算阈值
-        threshold = effective_window * compact_settings.threshold_pct
-
-        return token_counter.total_tokens >= threshold
-
     async def chat_async(self, message: str, thread_id: str = "default", on_token=None) -> dict[str, Any]:
         """与 Main Agent 对话（streaming 模式）
 
@@ -376,7 +260,7 @@ class MainAgent:
             on_token: 回调函数，每收到一个 token 就调用 on_token(token)
 
         Returns:
-            响应结果，包含 messages 和 token_status
+            响应结果，包含 messages
         """
         # 设置当前 thread_id 到 context（供工具调用时使用）
         _current_thread_id.set(thread_id)
@@ -386,24 +270,8 @@ class MainAgent:
         # 确保会话存在
         self.session_store.get_or_create_session(thread_id)
 
-        # 刷新 token 计数器（从历史消息重新计算）
-        token_counter = self.refresh_token_counter(thread_id)
-
-        # 自动压缩检查
-        auto_compact_result = None
-        if self._should_auto_compact(token_counter):
-            # 执行自动压缩
-            auto_compact_result = await self.compact_session(thread_id)
-            if auto_compact_result["success"]:
-                # 压缩成功，重新刷新计数器
-                token_counter = self.refresh_token_counter(thread_id)
-
         # 记录对话前的消息数量（用于后续同步）
         pre_msg_count = len(self.session_store.get_messages(thread_id))
-
-        # 计算输入消息的 token 并添加到计数器
-        input_tokens = count_messages_tokens([HumanMessage(content=message)])
-        token_counter.add_message(message)
 
         # 从 checkpointer 获取历史消息
         config = {"configurable": {"thread_id": thread_id}}
@@ -451,6 +319,8 @@ class MainAgent:
             "current_task": None,
             "memory_context": None,
             "subagent_results": {},
+            "thread_id": thread_id,
+            "session_id": thread_id,
         }
 
         accumulated_response = ""
@@ -473,15 +343,12 @@ class MainAgent:
                         new_messages = final_messages[pre_msg_count:]
                         if new_messages:
                             self.session_store.add_messages_batch(thread_id, new_messages)
-                            output_tokens = count_messages_tokens(new_messages)
-                            token_counter.add_messages(new_messages)
                         existing_messages = list(final_messages)
                     existing_messages.append(
                         AIMessage(content="[系统消息] 用户中断了执行。")
                     )
                     return {
                         "messages": existing_messages,
-                        "token_status": token_counter.get_status(),
                     }
 
                 # version="v2" 返回 dict 格式: {"type": ..., "data": ..., "ns": ...}
@@ -515,25 +382,15 @@ class MainAgent:
             new_messages = final_messages[pre_msg_count:]
             if new_messages:
                 self.session_store.add_messages_batch(thread_id, new_messages)
-                # 计算输出消息的 token
-                output_tokens = count_messages_tokens(new_messages)
-                token_counter.add_messages(new_messages)
             # 更新 existing_messages 用于返回
             existing_messages = list(final_messages)
 
-        # 更新 session_store 的 token 统计
-        self.session_store.update_session_tokens(thread_id, token_counter.total_tokens)
-
         result = {
             "messages": existing_messages,
-            "token_status": token_counter.get_status(),
         }
 
-        # 如果发生了自动压缩，添加到结果中
-        if auto_compact_result and auto_compact_result.get("success"):
-            result["auto_compact"] = auto_compact_result
-
         return result
+
 
 def create_main_agent() -> MainAgent:
     """创建 Main Agent 实例"""

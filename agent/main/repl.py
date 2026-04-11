@@ -138,7 +138,6 @@ async def _run_repl_async():
     sessions = session_store.list_sessions(limit=1)
     if sessions:
         thread_id = sessions[0]['session_id']
-        agent.refresh_token_counter(thread_id)
         _show_history(console, session_store, thread_id, show_timestamp=False)
     else:
         thread_id = f"session_{int(__import__('time').time())}"
@@ -159,18 +158,14 @@ async def _run_repl_async():
                 console.print("[dim]已取消输入[/dim]\n")
             continue
 
-        # 显示当前会话和 token 状态
+        # 显示当前会话
         current_session = session_store.get_session(thread_id)
         session_title = current_session.get("title", thread_id) if current_session else thread_id
-
-        # 获取 token 状态
-        token_status = agent.get_token_status(thread_id)
-        token_info = f"[dim]({token_status['usage_ratio']}%)[/dim]"
 
         # 异步等待用户输入（使用 asyncio.to_thread 避免阻塞事件循环）
         try:
             user_input = await asyncio.to_thread(
-                lambda: console.input(f"[bold blue]You[/bold blue] [dim]({session_title})[/dim] {token_info}: ").strip()
+                lambda: console.input(f"[bold blue]You[/bold blue] [dim]({session_title})[/dim]: ").strip()
             )
         except (KeyboardInterrupt, EOFError):
             # Ctrl+C 或 Ctrl+D 在等待输入时
@@ -193,8 +188,6 @@ async def _run_repl_async():
         if cmd_lower == "/new":
             thread_id = f"session_{int(__import__('time').time())}"
             session_store.create_session(thread_id)
-            # 重置 token 计数器
-            agent.refresh_token_counter(thread_id)
             console.print("[bold green]已创建并进入新会话[/bold green]\n")
             continue
 
@@ -294,7 +287,6 @@ async def _run_repl_async():
                 continue
 
             thread_id = new_session_id
-            agent.refresh_token_counter(thread_id)
 
             # 显示历史消息
             if not _show_history(console, session_store, thread_id, show_timestamp=False):
@@ -307,13 +299,16 @@ async def _run_repl_async():
             continue
 
         if cmd_lower == "/compact":
-            # 压缩上下文
-            token_status = agent.get_token_status(thread_id)
-            console.print(f"[dim]压缩前: {token_status['total_tokens']:,} tokens ({token_status['usage_ratio']}%)[/dim]")
+            # 手动压缩上下文
+            from agent.middleware.context_compact import compact_session
+
+            session = session_store.get_session(thread_id)
+            total_tokens = session.get("total_tokens", 0) if session else 0
+            console.print(f"[dim]压缩前: {total_tokens:,} tokens[/dim]")
             console.print("[cyan]正在生成摘要...[/cyan]")
 
             try:
-                result = await agent.compact_session(thread_id, keep_recent=10)
+                result = await compact_session(thread_id, agent.context_window)
 
                 if result["success"]:
                     saved = result["tokens_before"] - result["tokens_after"]
@@ -328,7 +323,7 @@ async def _run_repl_async():
                         summary = summary[:500] + "..."
                     console.print(Panel(summary, border_style="dim"))
                 else:
-                    console.print(f"[yellow]{result['message']}[/yellow]\n")
+                    console.print(f"[yellow]{result.get('message', '压缩失败')}[/yellow]\n")
 
             except Exception as e:
                 console.print(f"[red]压缩失败: {e}[/red]\n")
@@ -354,21 +349,6 @@ async def _run_repl_async():
         if is_interrupted():
             console.print("[yellow]\n[执行被中断，已保存部分输出][/yellow]\n")
             clear_interrupt()
-
-        # 显示自动压缩通知
-        auto_compact = result.get("auto_compact")
-        if auto_compact and auto_compact.get("success"):
-            saved = auto_compact["tokens_before"] - auto_compact["tokens_after"]
-            console.print(f"[cyan]📌 上下文已自动压缩: {auto_compact['tokens_before']:,} → {auto_compact['tokens_after']:,} tokens (节省 {saved:,})[/cyan]\n")
-
-        # 显示 token 状态警告
-        token_status = result.get("token_status", {})
-        if token_status.get("is_near_limit"):
-            usage_ratio = token_status.get("usage_ratio", 0)
-            remaining = token_status.get("remaining_tokens", 0)
-            console.print(f"[yellow]⚠️ 上下文接近上限 ({usage_ratio}%, 剩余 {remaining:,} tokens)[/yellow]\n")
-        elif token_status.get("is_over_limit"):
-            console.print(f"[red]⚠️ 上下文已超出限制，请考虑开始新会话[/red]\n")
 
         console.print()
 
