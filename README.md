@@ -1,6 +1,7 @@
 # AI Agent Harness
 
 基于 LangChain/LangGraph 构建的多 Agent 协作框架，支持智能任务路由、并行执行、多会话管理与工具扩展。
+- Arthur：fangyanbin
 
 ## 核心架构
 
@@ -162,20 +163,4 @@ python main.py
 
 ---
 
-## 项目版本
 
-**AI Agent Harness 智能代理协作框架**  
-LangChain | LangGraph | SQLite | ChromaDB | Rich  
-2025.04 - 至今
-
-基于 LangGraph 状态机与多 Agent 协作构建的智能任务执行框架，支持复杂任务的自动拆解、并行执行与中断恢复。系统围绕 Main Agent（智能路由）、Plan Agent（任务规划）、Research Agent（信息收集）、Analysis Agent（数据分析）等核心代理进行能力拆分，覆盖用户对话、工具调用、任务执行、会话管理等全流程场景。
-
-**工作内容：**
-
-针对复杂任务的自动拆解与执行，基于 LangGraph 状态机构建 Plan Agent，采用依赖拓扑排序实现任务并行度分析，结合 Worker Pool 与 SQLite 原子锁，任务执行成功率提升至 95%+
-
-针对多轮对话的工具调用上下文恢复问题，设计 AIMessage(tool_calls) + ToolMessage 完整消息链持久化方案，基于 SQLite + JSON 序列化实现会话级状态保存，对话上下文恢复准确率达 100%
-
-针对 LLM 推理过程中的用户中断需求，采用 Threading.Event 实现全局中断信号机制，结合 AgentRegistry 依赖注入模式，实现跨组件的优雅中断与状态保存
-
-针对多样化外部工具集成需求，基于 LangChain Tool 抽象设计统一工具接口，支持 Web 搜索、arXiv 论文、Firecrawl 爬虫、RAG 检索等 20+ 工具的即插即用扩展
