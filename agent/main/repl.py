@@ -106,14 +106,15 @@ async def _run_repl_async():
     agent = create_main_agent()
     session_store = SessionStore()
 
-    # 初始化 MCP 服务器
+    # 异步初始化 MCP 服务器（后台连接，不阻塞）
     try:
-        from tools.mcp import init_mcp_from_config, get_mcp_manager
-        init_mcp_from_config()
+        from tools.mcp import init_mcp_from_config_async, get_mcp_manager
+        await init_mcp_from_config_async(background=True)
         manager = get_mcp_manager()
         servers = manager.list_servers()
-        if servers:
-            console.print(f"[dim]已连接 {len(servers)} 个 MCP 服务器[/dim]\n")
+        connecting_count = sum(1 for s in servers if s.get("connecting"))
+        if connecting_count > 0:
+            console.print(f"[dim]正在后台连接 {connecting_count} 个 MCP 服务器...[/dim]\n")
     except Exception as e:
         console.print(f"[dim]MCP 初始化: {e}[/dim]\n")
 

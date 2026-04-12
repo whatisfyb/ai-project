@@ -27,8 +27,43 @@ def get_mcp_manager() -> MCPManager:
     return _mcp_manager
 
 
+async def init_mcp_from_config_async(background: bool = True) -> dict:
+    """从配置文件异步初始化 MCP 服务器（不阻塞主线程）
+
+    Args:
+        background: 是否后台连接（True 时不阻塞）
+
+    Returns:
+        初始化结果统计
+    """
+    from utils.config import get_settings_instance
+
+    manager = get_mcp_manager()
+    settings = get_settings_instance()
+
+    for server_config in settings.mcp.servers:
+        if server_config.get("enabled", True):
+            await manager.add_server_async(
+                name=server_config["name"],
+                command=server_config.get("command"),
+                args=server_config.get("args"),
+                url=server_config.get("url"),
+                env=server_config.get("env"),
+                background=background,
+            )
+
+    if not background:
+        # 等待所有连接完成
+        return await manager.wait_for_connections()
+
+    return {"status": "background", "servers": len(settings.mcp.servers)}
+
+
 def init_mcp_from_config():
-    """从配置文件初始化 MCP 服务器"""
+    """从配置文件初始化 MCP 服务器（同步，会阻塞）
+
+    Deprecated: 使用 init_mcp_from_config_async 代替
+    """
     from utils.config import get_settings_instance
 
     manager = get_mcp_manager()
