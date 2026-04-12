@@ -340,13 +340,22 @@ class MainAgent:
                     final_state = graph.get_state(config)
                     if final_state and final_state.values:
                         final_messages = final_state.values.get("messages", [])
+
+                        # 处理未完成的 tool_calls：保留 AIMessage 内容，清空 tool_calls
+                        if final_messages:
+                            last_msg = final_messages[-1]
+                            if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
+                                # 有未完成的工具调用，清空 tool_calls 保留 content
+                                interrupted_content = last_msg.content or ""
+                                final_messages[-1] = AIMessage(
+                                    content=interrupted_content + "\n\n[系统消息] 用户中断了执行，工具调用已取消。"
+                                    if interrupted_content else "[系统消息] 用户中断了执行，工具调用已取消。"
+                                )
+
                         new_messages = final_messages[pre_msg_count:]
                         if new_messages:
                             self.session_store.add_messages_batch(thread_id, new_messages)
                         existing_messages = list(final_messages)
-                    existing_messages.append(
-                        AIMessage(content="[系统消息] 用户中断了执行。")
-                    )
                     return {
                         "messages": existing_messages,
                     }
@@ -367,6 +376,17 @@ class MainAgent:
             final_state = graph.get_state(config)
             if final_state and final_state.values:
                 final_messages = final_state.values.get("messages", [])
+
+                # 处理未完成的 tool_calls：保留 AIMessage 内容，清空 tool_calls
+                if final_messages:
+                    last_msg = final_messages[-1]
+                    if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
+                        interrupted_content = last_msg.content or ""
+                        final_messages[-1] = AIMessage(
+                            content=interrupted_content + "\n\n[系统消息] 执行被取消，工具调用已终止。"
+                            if interrupted_content else "[系统消息] 执行被取消，工具调用已终止。"
+                        )
+
                 # 获取新增的消息（对话前有 pre_msg_count 条）
                 new_messages = final_messages[pre_msg_count:]
                 if new_messages:
