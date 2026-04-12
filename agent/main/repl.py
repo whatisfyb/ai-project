@@ -10,7 +10,7 @@ from rich.panel import Panel
 
 from agent.main.agent import create_main_agent
 from agent.main.commands import CommandContext, execute_command
-from agent.core.registry import terminate
+from agent.core.registry import agent_registry, terminate
 from agent.core.signals import set_interrupt, clear_interrupt, is_interrupted
 from store.session import SessionStore
 
