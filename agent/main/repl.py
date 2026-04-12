@@ -7,10 +7,10 @@ import threading
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.table import Table
 
 from agent.main.agent import create_main_agent
-from agent.core.registry import agent_registry, terminate
+from agent.main.commands import CommandContext, execute_command
+from agent.core.registry import terminate
 from agent.core.signals import set_interrupt, clear_interrupt, is_interrupted
 from store.session import SessionStore
 
@@ -193,154 +193,25 @@ async def _run_repl_async():
             continue
 
         # 处理命令
-        cmd_lower = user_input.lower()
+        if user_input.startswith("/"):
+            ctx = CommandContext(
+                console=console,
+                session_store=session_store,
+                thread_id=thread_id,
+                agent=agent,
+            )
+            result = await execute_command(user_input, ctx)
 
-        if cmd_lower == "/exit":
-            console.print("[bold yellow]再见！[/bold yellow]")
-            break
-
-        if cmd_lower == "/new":
-            thread_id = f"session_{int(__import__('time').time())}"
-            session_store.create_session(thread_id)
-            console.print("[bold green]已创建并进入新会话[/bold green]\n")
-            continue
-
-        if cmd_lower.startswith("/delete"):
-            parts = user_input.split(maxsplit=1)
-            if len(parts) < 2:
-                console.print("[red]用法: /delete <session_id>[/red]\n")
+            if result.error:
+                console.print(f"[red]{result.error}[/red]\n")
                 continue
 
-            del_session_id = parts[1].strip()
+            if result.should_exit:
+                break
 
-            # 不能删除当前会话
-            if del_session_id == thread_id:
-                console.print("[red]不能删除当前会话，请先切换到其他会话[/red]\n")
-                continue
+            if result.new_thread_id:
+                thread_id = result.new_thread_id
 
-            session = session_store.get_session(del_session_id)
-            if not session:
-                console.print(f"[red]会话不存在: {del_session_id}[/red]\n")
-                continue
-
-            session_store.delete_session(del_session_id)
-            console.print(f"[yellow]已删除会话: {session['title']}[/yellow]\n")
-            continue
-
-        if cmd_lower == "/status":
-            running = agent_registry.is_running()
-            plan_ids = agent_registry.get_running_plan_ids()
-            if running:
-                console.print(f"[cyan]正在运行的任务: {plan_ids}[/cyan]\n")
-            else:
-                console.print("[dim]没有正在运行的任务[/dim]\n")
-            continue
-
-        if cmd_lower == "/help":
-            console.print(Panel.fit(
-                "[bold green]Main Agent 帮助[/bold green]\n\n"
-                "[dim]命令：[/dim]\n"
-                "  [cyan]/new[/cyan]         - 创建并进入新会话\n"
-                "  [cyan]/delete <id>[/cyan] - 删除指定会话\n"
-                "  [cyan]/sessions[/cyan]    - 列出所有会话\n"
-                "  [cyan]/resume <id>[/cyan] - 切换到指定会话\n"
-                "  [cyan]/history[/cyan]     - 查看当前会话历史\n"
-                "  [cyan]/compact[/cyan]     - 压缩上下文\n"
-                "  [cyan]/status[/cyan]      - 查看运行状态\n"
-                "  [cyan]/help[/cyan]        - 显示帮助\n"
-                "  [cyan]/exit[/cyan]        - 退出\n"
-                "  [cyan]Ctrl+C[/cyan]       - 终止当前任务",
-                title="帮助"
-            ))
-            console.print()
-            continue
-
-        if cmd_lower == "/sessions":
-            sessions = session_store.list_sessions(limit=20)
-            if not sessions:
-                console.print("[dim]没有历史会话[/dim]\n")
-                continue
-
-            table = Table(title="历史会话")
-            table.add_column("ID", style="cyan")
-            table.add_column("标题")
-            table.add_column("消息数", justify="right")
-            table.add_column("更新时间")
-
-            for s in sessions:
-                # 格式化时间
-                try:
-                    dt = __import__('datetime').datetime.fromisoformat(s['updated_at'])
-                    time_str = dt.strftime('%m-%d %H:%M')
-                except:
-                    time_str = s['updated_at'][:16]
-
-                # 标记当前会话
-                is_current = " [green]*[/green]" if s['session_id'] == thread_id else ""
-                table.add_row(
-                    s['session_id'] + is_current,
-                    s['title'][:30],
-                    str(s['message_count']),
-                    time_str
-                )
-
-            console.print(table)
-            console.print("[dim]使用 /resume <session_id> 切换会话[/dim]\n")
-            continue
-
-        if cmd_lower.startswith("/resume"):
-            parts = user_input.split(maxsplit=1)
-            if len(parts) < 2:
-                console.print("[red]用法: /resume <session_id>[/red]\n")
-                continue
-
-            new_session_id = parts[1].strip()
-            session = session_store.get_session(new_session_id)
-            if not session:
-                console.print(f"[red]会话不存在: {new_session_id}[/red]\n")
-                continue
-
-            thread_id = new_session_id
-
-            # 显示历史消息
-            if not _show_history(console, session_store, thread_id, show_timestamp=False):
-                console.print(f"[bold green]已切换到会话: {session['title']}[/bold green] (无历史消息)\n")
-            continue
-
-        if cmd_lower == "/history":
-            if not _show_history(console, session_store, thread_id, show_timestamp=True):
-                console.print("[dim]当前会话没有历史消息[/dim]\n")
-            continue
-
-        if cmd_lower == "/compact":
-            # 手动压缩上下文
-            from agent.middleware.context_compact import compact_session
-
-            session = session_store.get_session(thread_id)
-            total_tokens = session.get("total_tokens", 0) if session else 0
-            console.print(f"[dim]压缩前: {total_tokens:,} tokens[/dim]")
-            console.print("[cyan]正在生成摘要...[/cyan]")
-
-            try:
-                result = await compact_session(thread_id, agent.context_window)
-
-                if result["success"]:
-                    saved = result["tokens_before"] - result["tokens_after"]
-                    console.print(f"\n[bold green]✓ 压缩完成[/bold green]")
-                    console.print(f"  - 移除消息: {result['messages_removed']} 条")
-                    console.print(f"  - 保留消息: {result['messages_kept']} 条")
-                    console.print(f"  - Token: {result['tokens_before']:,} → {result['tokens_after']:,} (节省 {saved:,})")
-                    console.print(f"\n[dim]摘要:[/dim]")
-                    # 显示摘要的前 500 字符
-                    summary = result.get("summary", "")
-                    if len(summary) > 500:
-                        summary = summary[:500] + "..."
-                    console.print(Panel(summary, border_style="dim"))
-                else:
-                    console.print(f"[yellow]{result.get('message', '压缩失败')}[/yellow]\n")
-
-            except Exception as e:
-                console.print(f"[red]压缩失败: {e}[/red]\n")
             continue
 
         # 调用 Agent（async streaming 模式）
