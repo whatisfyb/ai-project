@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 
-from agent.core.models import Task, Plan
+from agent.core.models import PlanTask, Plan
 from agent.core.signals import set_interrupt, clear_interrupt, is_interrupted
 from agent.core.registry import agent_registry
 from agent.executor.worker import TaskWorker

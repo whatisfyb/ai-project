@@ -15,7 +15,7 @@ from typing import Any
 
 from langchain_core.tools import tool
 
-from agent.core.models import Task
+from agent.core.models import PlanTask
 from store.plan import PlanStore
 
 

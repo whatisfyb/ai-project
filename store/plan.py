@@ -8,7 +8,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from agent.core.models import Plan, Task
+from agent.core.models import Plan, PlanTask as Task
 
 
 # 默认数据库路径

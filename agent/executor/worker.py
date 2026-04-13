@@ -7,7 +7,7 @@
 import threading
 from typing import Optional
 
-from agent.core.models import Task
+from agent.core.models import PlanTask
 from agent.core.signals import is_interrupted
 from store.plan import PlanStore
 from utils.llm import get_llm_model
@@ -126,7 +126,7 @@ class TaskWorker:
 
         return results
 
-    def _execute_with_timeout(self, task: Task) -> str:
+    def _execute_with_timeout(self, task: PlanTask) -> str:
         """带超时执行任务
 
         支持多轮工具调用，直到 LLM 返回文本响应。

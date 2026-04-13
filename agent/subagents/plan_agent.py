@@ -6,7 +6,7 @@ from typing_extensions import TypedDict
 
 from langgraph.graph import StateGraph, END, START
 
-from agent.core.models import Plan, Task
+from agent.core.models import Plan, PlanTask
 from agent.subagents.base import BaseSubagent
 from store.plan import PlanStore
 
@@ -119,7 +119,7 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
             # 解析失败，创建默认计划
             plan = Plan(
                 goal=task,
-                tasks=[Task(id="T1", description=task, dependencies=[], status="pending")],
+                tasks=[PlanTask(id="T1", description=task, dependencies=[], status="pending")],
                 status="pending"
             )
 
@@ -173,7 +173,7 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
         """
         return self.store.load_plan(plan_id)
 
-    def get_pending_tasks(self, plan_id: str) -> list[Task]:
+    def get_pending_tasks(self, plan_id: str) -> list[PlanTask]:
         """获取可执行的待处理 Tasks
 
         Args:
@@ -210,7 +210,7 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
         """
         return self.store.update_task_status(plan_id, task_id, "failed", result)
 
-    def claim_task(self, plan_id: str, worker_id: str) -> Task | None:
+    def claim_task(self, plan_id: str, worker_id: str) -> PlanTask | None:
         """原子领取任务
 
         Args:
