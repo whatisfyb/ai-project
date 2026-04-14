@@ -48,22 +48,12 @@ from agent.a2a.dispatcher import (
     # 结果
     TaskResult,
     TaskResultStatus,
-    TaskResultQueue,
+    Inbox,
     # 状态
     MainAgentBusyState,
-    # 消息
-    InternalMessage,
-    InternalMessageType,
-    InternalMessageChannel,
-    # 监控
-    DispatchMonitor,
     # 全局实例
-    get_result_queue,
+    get_inbox,
     get_agent_state,
-    get_message_channel,
-    get_dispatch_monitor,
-    init_dispatch_system,
-    shutdown_dispatch_system,
 )
 
 __all__ = [
@@ -101,18 +91,10 @@ __all__ = [
     # Dispatcher
     "TaskResult",
     "TaskResultStatus",
-    "TaskResultQueue",
+    "Inbox",
     "MainAgentBusyState",
-    "InternalMessage",
-    "InternalMessageType",
-    "InternalMessageChannel",
-    "DispatchMonitor",
-    "get_result_queue",
+    "get_inbox",
     "get_agent_state",
-    "get_message_channel",
-    "get_dispatch_monitor",
-    "init_dispatch_system",
-    "shutdown_dispatch_system",
     # Event
     "TaskEvent",
 ]

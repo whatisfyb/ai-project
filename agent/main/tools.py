@@ -27,6 +27,9 @@ def get_main_agent_tools() -> list:
         mcp_list_servers, mcp_connect, mcp_disconnect,
         mcp_list_tools, mcp_call_tool,
     )
+    from agent.a2a.tools import (
+        plan_dispatch, job_status, job_list, job_wait, worker_list,
+    )
 
     return [
         # Web 搜索和内容提取
@@ -53,11 +56,17 @@ def get_main_agent_tools() -> list:
         list_subagents,
         # Plan/Task 管理
         plan_get,
-        plan_execute,
+        # plan_execute,
         task_add,
         task_update,
         task_delete,
         task_get,
+        # A2A Worker 分发
+        plan_dispatch,
+        job_status,
+        job_list,
+        job_wait,
+        worker_list,
         # Skills
         load_skills,
         list_skills,

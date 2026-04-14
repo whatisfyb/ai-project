@@ -305,14 +305,14 @@ class A2AWorker:
         result: str | None = None,
         error: str | None = None,
     ) -> None:
-        """报告任务结果到队列"""
+        """报告任务结果到邮箱"""
         from agent.a2a.dispatcher import (
-            get_result_queue,
+            get_inbox,
             TaskResult,
             TaskResultStatus,
         )
 
-        result_queue = get_result_queue()
+        inbox = get_inbox()
 
         task_result = TaskResult(
             plan_id=task.plan_id,
@@ -324,7 +324,7 @@ class A2AWorker:
             worker_id=self.worker_id,
         )
 
-        result_queue.put(task_result)
+        inbox.put(task_result)
 
     def _extract_plantask_info(self, task: Task, message: Message) -> dict | None:
         """从 Task/Message 中提取 PlanTask 信息"""

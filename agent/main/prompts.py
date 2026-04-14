@@ -119,6 +119,13 @@ MAIN_AGENT_PROMPT = """你是一个智能助手，帮助用户完成软件工程
 - `task_delete` - 删除任务
 - `task_get` - 获取任务详情
 
+### A2A Worker 分发工具
+- `plan_dispatch` - 非阻塞分发计划给 Worker 执行
+- `job_status` - 查询任务执行状态
+- `job_list` - 列出当前的任务
+- `job_wait` - 等待任务完成（阻塞）
+- `worker_list` - 列出所有可用的 Worker
+
 ### Skills 技能工具
 - `list_skills` - 列出所有可用的 AI 技能
 - `load_skills` - 加载指定技能到当前上下文

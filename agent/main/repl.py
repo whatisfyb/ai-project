@@ -2,6 +2,8 @@
 
 import asyncio
 import signal
+import sys
+import queue
 import threading
 
 from rich.console import Console
@@ -13,10 +15,81 @@ from agent.main.commands import CommandContext, execute_command
 from agent.core.registry import agent_registry, terminate
 from agent.core.signals import set_interrupt, clear_interrupt, is_interrupted
 from store.session import SessionStore
+from agent.a2a.dispatcher import get_inbox, get_agent_state, TaskResultStatus
+
+
+# 后台输入线程
+class InputThread:
+    """后台输入线程，将用户输入放入队列"""
+
+    def __init__(self):
+        self._queue: queue.Queue[str] = queue.Queue()
+        self._running = False
+        self._thread: threading.Thread | None = None
+        self._prompt: str = ""
+        self._should_prompt = threading.Event()
+
+    def start(self):
+        self._running = True
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        self._running = False
+        self._should_prompt.set()
+
+    def request_input(self, prompt: str):
+        """请求输入（打印提示符并等待）"""
+        self._prompt = prompt
+        self._should_prompt.set()
+
+    def get(self, timeout: float = 0.1) -> str | None:
+        """获取输入（非阻塞）"""
+        try:
+            return self._queue.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def _run(self):
+        while self._running:
+            # 等待请求
+            self._should_prompt.wait()
+            if not self._running:
+                break
+
+            self._should_prompt.clear()
+
+            # 打印提示符并等待输入
+            try:
+                user_input = input(self._prompt).strip()
+                self._queue.put(user_input)
+            except (KeyboardInterrupt, EOFError):
+                self._queue.put("")
 
 
 # 模块级别的中断标志（用于 signal handler 和 async 函数之间共享）
 _repl_interrupted = False
+
+
+def _format_inbox_results(results) -> str:
+    """格式化 inbox 结果为提示词"""
+    lines = ["以下 Worker 任务已完成：\n"]
+
+    for r in results:
+        status_icon = "✓" if r.status == TaskResultStatus.SUCCESS else "✗"
+        lines.append(f"[{status_icon}] 任务 {r.task_id}")
+        lines.append(f"  Plan: {r.plan_id}")
+
+        if r.status == TaskResultStatus.SUCCESS:
+            result_preview = r.result[:200] if r.result and len(r.result) > 200 else (r.result or "无输出")
+            lines.append(f"  结果: {result_preview}")
+        else:
+            lines.append(f"  错误: {r.error}")
+
+        lines.append("")
+
+    lines.append("请根据这些结果决定下一步行动。")
+    return "\n".join(lines)
 
 
 def _show_history(console: Console, session_store: SessionStore, thread_id: str, show_timestamp: bool = False):
@@ -105,6 +178,12 @@ async def _run_repl_async():
     console = Console()
     agent = create_main_agent()
     session_store = SessionStore()
+    inbox = get_inbox()
+    agent_state = get_agent_state()
+    input_thread = InputThread()
+
+    # 启动输入线程
+    input_thread.start()
 
     # 异步初始化 MCP 服务器（后台连接，不阻塞）
     try:
@@ -148,94 +227,127 @@ async def _run_repl_async():
         session_store.create_session(thread_id)
         console.print("[dim]已创建新会话[/dim]\n")
 
-    while True:
-        # 检查是否被中断
-        if _repl_interrupted:
-            _repl_interrupted = False
-            clear_interrupt()
-            if agent_registry.is_running():
-                terminate()
-                console.print("[yellow]任务已终止[/yellow]\n")
-                console.print("[dim]请输入新任务或 /exit 退出[/dim]\n")
-            else:
-                # 没有任务在运行，Ctrl+C 只是放弃当前输入，继续等待
-                console.print("[dim]已取消输入[/dim]\n")
-            continue
-
-        # 显示当前会话和 token 状态
-        current_session = session_store.get_session(thread_id)
-        session_title = current_session.get("title", thread_id) if current_session else thread_id
-        total_tokens = current_session.get("total_tokens", 0) if current_session else 0
-
-        # 从配置获取上下文状态
-        from utils.config import get_default_model_config, check_context_status
-        model_config = get_default_model_config()
-        context_status = check_context_status(total_tokens, model_config)
-
-        # 计算用量百分比
-        usage_ratio = round(context_status.percent_used, 1)
-        token_info = f"[dim]({usage_ratio}%)[/dim]"
-
-        # 异步等待用户输入（使用 asyncio.to_thread 避免阻塞事件循环）
-        try:
-            user_input = await asyncio.to_thread(
-                lambda: console.input(f"[bold blue]You[/bold blue] [dim]({session_title})[/dim] {token_info}: ").strip()
-            )
-        except (KeyboardInterrupt, EOFError):
-            # Ctrl+C 或 Ctrl+D 在等待输入时
-            user_input = ""
-
-        if not user_input:
-            # Ctrl+C 会导致 user_input 为空，这不算正常输入，继续循环即可
-            continue
-
-        if not user_input:
-            continue
-
-        # 处理命令
-        if user_input.startswith("/"):
-            ctx = CommandContext(
-                console=console,
-                session_store=session_store,
-                thread_id=thread_id,
-                agent=agent,
-            )
-            result = await execute_command(user_input, ctx)
-
-            if result.error:
-                console.print(f"[red]{result.error}[/red]\n")
+    try:
+        while True:
+            # 检查是否被中断
+            if _repl_interrupted:
+                _repl_interrupted = False
+                clear_interrupt()
+                if agent_registry.is_running():
+                    terminate()
+                    console.print("[yellow]任务已终止[/yellow]\n")
+                    console.print("[dim]请输入新任务或 /exit 退出[/dim]\n")
+                else:
+                    console.print("[dim]已取消输入[/dim]\n")
                 continue
 
-            if result.should_exit:
-                break
+            # 显示当前会话和 token 状态
+            current_session = session_store.get_session(thread_id)
+            session_title = current_session.get("title", thread_id) if current_session else thread_id
+            total_tokens = current_session.get("total_tokens", 0) if current_session else 0
 
-            if result.new_thread_id:
-                thread_id = result.new_thread_id
+            # 从配置获取上下文状态
+            from utils.config import get_default_model_config, check_context_status
+            model_config = get_default_model_config()
+            context_status = check_context_status(total_tokens, model_config)
 
-            continue
+            # 计算用量百分比
+            usage_ratio = round(context_status.percent_used, 1)
 
-        # 调用 Agent（async streaming 模式）
-        console.print("\n[bold green]Agent:[/bold green] ")
-        accumulated = []
+            # 构造提示符（纯文本）
+            plain_prompt = f"You ({session_title}) ({usage_ratio}%): "
 
-        def on_token(token):
-            accumulated.append(token)
-            console.print(token, end="")  # 实时打印 token
+            # 请求输入
+            input_thread.request_input(plain_prompt)
 
-        try:
-            result = await agent.chat_async(user_input, thread_id, on_token=on_token)
-        except Exception as e:
-            console.print(f"\n[bold red]错误:[/bold red] {e}\n")
-            continue
+            # 等待输入（非阻塞轮询）
+            user_input = None
+            while True:
+                # 检查输入队列
+                user_input = input_thread.get(timeout=0.1)
 
-        console.print()  # 换行
+                if user_input is not None:
+                    break
 
-        # 如果被中断了，打印提示
-        if is_interrupted():
-            console.print("[yellow]\n[执行被中断，已保存部分输出][/yellow]\n")
-            clear_interrupt()
+                # 检查中断
+                if _repl_interrupted:
+                    break
 
-        console.print()
+                # 检查 inbox（idle 状态下）
+                if agent_state.is_idle() and not inbox.is_empty():
+                    results = inbox.get_all()
+                    if results:
+                        console.print("\n[dim]收到 Worker 任务结果...[/dim]\n")
+                        prompt = _format_inbox_results(results)
+
+                        console.print("[bold green]Agent:[/bold green] ")
+                        agent_state.set_busy()
+                        try:
+                            await agent.chat_async(prompt, thread_id, on_token=lambda t: console.print(t, end=""))
+                        except Exception as e:
+                            console.print(f"\n[bold red]错误:[/bold red] {e}\n")
+                        finally:
+                            agent_state.set_idle()
+
+                        console.print("\n")
+
+                # 短暂休眠避免忙等待
+                await asyncio.sleep(0.05)
+
+            # 处理中断
+            if _repl_interrupted:
+                continue
+
+            # 有用户输入，处理
+            if user_input:
+                # 处理命令
+                if user_input.startswith("/"):
+                    ctx = CommandContext(
+                        console=console,
+                        session_store=session_store,
+                        thread_id=thread_id,
+                        agent=agent,
+                    )
+                    result = await execute_command(user_input, ctx)
+
+                    if result.error:
+                        console.print(f"[red]{result.error}[/red]\n")
+                        continue
+
+                    if result.should_exit:
+                        break
+
+                    if result.new_thread_id:
+                        thread_id = result.new_thread_id
+
+                    continue
+
+                # 调用 Agent
+                console.print("\n[bold green]Agent:[/bold green] ")
+                accumulated = []
+
+                def on_token(token):
+                    accumulated.append(token)
+                    console.print(token, end="")
+
+                agent_state.set_busy()
+                try:
+                    result = await agent.chat_async(user_input, thread_id, on_token=on_token)
+                except Exception as e:
+                    console.print(f"\n[bold red]错误:[/bold red] {e}\n")
+                finally:
+                    agent_state.set_idle()
+
+                console.print()
+
+                if is_interrupted():
+                    console.print("[yellow]\n[执行被中断，已保存部分输出][/yellow]\n")
+                    clear_interrupt()
+
+                console.print()
+
+    finally:
+        input_thread.stop()
 
 
 if __name__ == "__main__":
