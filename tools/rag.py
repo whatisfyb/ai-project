@@ -8,7 +8,7 @@ from langchain_core.tools import tool
 
 from utils.vector_store import VectorStore
 from utils.reranker import rerank_with_scores
-from utils.hybrid_search import HybridSearcher
+from utils.hybrid_search import HybridSearcher, rrf_fusion
 from utils.whoosh_index import get_whoosh_index
 
 
@@ -36,6 +36,42 @@ def _get_hybrid_searcher() -> HybridSearcher:
 RERANK_MIN_CANDIDATES = 3
 
 
+def _merge_multi_query_results(
+    results: list[tuple],
+    top_k: int,
+) -> list[tuple]:
+    """融合多查询结果（按文档 ID 去重，保留最高分）
+
+    Args:
+        results: 所有查询的结果列表
+        top_k: 返回数量
+
+    Returns:
+        去重后的结果列表
+    """
+    doc_scores: dict[str, tuple] = {}
+
+    for doc, score in results:
+        doc_id = doc.metadata.get("id", doc.page_content[:50])
+
+        if doc_id not in doc_scores:
+            doc_scores[doc_id] = (doc, score)
+        else:
+            # 保留最高分
+            _, old_score = doc_scores[doc_id]
+            if score > old_score:
+                doc_scores[doc_id] = (doc, score)
+
+    # 按分数排序
+    sorted_results = sorted(
+        doc_scores.values(),
+        key=lambda x: x[1],
+        reverse=True
+    )
+
+    return sorted_results[:top_k]
+
+
 @tool
 def paper_search(
     query: str,
@@ -47,6 +83,7 @@ def paper_search(
     year_max: Optional[int] = None,
     rerank: bool = True,
     hybrid: bool = True,
+    expand_query: bool = False,
 ) -> dict[str, Any]:
     """Search for relevant content from the paper knowledge base.
 
@@ -64,11 +101,18 @@ def paper_search(
         year_max: Maximum publication year (inclusive)
         rerank: Whether to rerank results using cross-encoder (default: True)
         hybrid: Whether to use hybrid search (vector + BM25) (default: True)
+        expand_query: Whether to expand query using LLM for better recall (default: False)
 
     Returns:
         Dictionary containing search results with paper metadata and relevant content
     """
     try:
+        # 查询扩展
+        queries = [query]
+        if expand_query:
+            from utils.query_rewriter import expand_query as do_expand
+            queries = do_expand(query, n_expansions=2)
+
         # 构建元数据过滤条件
         filter_conditions = []
 
@@ -99,7 +143,18 @@ def paper_search(
         if hybrid and not filter_dict:
             # 混合检索（不支持元数据过滤）
             searcher = _get_hybrid_searcher()
-            results = searcher.search(query, k=top_k, use_bm25=True)
+
+            if len(queries) == 1:
+                # 单查询
+                results = searcher.search(query, k=top_k, use_bm25=True)
+            else:
+                # 多查询：分别检索，融合结果
+                all_results = []
+                for q in queries:
+                    all_results.extend(searcher.search(q, k=top_k * 2, use_bm25=True))
+
+                # 按文档 ID 去重融合
+                results = _merge_multi_query_results(all_results, top_k)
         else:
             # 纯向量检索（支持元数据过滤）
             store = _get_paper_store()
