@@ -9,7 +9,7 @@ project_root = Path(__file__).parent.parent.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from tools.web import web_search
+from tools.web import web
 
 
 def run(query: str, max_results: int = 5, **kwargs) -> dict[str, Any]:
@@ -31,11 +31,19 @@ def run(query: str, max_results: int = 5, **kwargs) -> dict[str, Any]:
         }
 
     try:
-        # 调用 Tavily 搜索
-        result = tavily_search.invoke({
+        # 调用合并后的 web 工具
+        result = web.invoke({
+            "action": "search",
             "query": query,
             "max_results": max_results,
         })
+
+        if result.get("status") == "error":
+            return {
+                "success": False,
+                "error": result.get("error", "Unknown error"),
+                "results": [],
+            }
 
         return {
             "success": True,

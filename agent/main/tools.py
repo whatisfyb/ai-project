@@ -2,94 +2,63 @@
 
 
 def get_main_agent_tools() -> list:
-    """获取 Main Agent 可用的工具列表"""
-    from tools.web import (
-        web_search, web_fetch, web_scrape, web_crawl, web_map,
-        arxiv_search, arxiv_get_by_id, arxiv_download_pdf,
+    """获取 Main Agent 可用的工具列表
+
+    合并后的工具：
+    - web: Web 搜索、抓取、arXiv（原 8 个）
+    - agent: 子代理分发（原 2 个）
+    - paper_kb: 论文知识库（原 7 个）
+    - task: 任务管理（原 4 个）
+    """
+    # 合并后的核心工具
+    from tools.web import web
+    from tools.agent import agent
+    from tools.paper_kb import paper_kb
+    from tools.task import task
+
+    # A2A 工具
+    from agent.a2a.tools import (
+        plan_dispatch, job_status, job_list, job_wait, worker_list,
     )
-    from tools.agent import dispatch_agent, list_subagents
+    # Skills 工具
     from tools.skills import load_skills, list_skills, skill_call
-    from tools.task import (
-        plan_get, plan_execute,
-        task_add, task_update, task_delete, task_get,
-    )
+    # 文件操作工具
     from tools.grep import grep, grep_count
     from tools.read import read
     from tools.write import write, append
     from tools.edit import edit, edit_regex
     from tools.bash import bash, bash_script
     from tools.glob import glob, glob_list
-    from tools.rag import (
-        paper_search, paper_list, paper_stats,
-        paper_ingest, paper_ingest_status, paper_ingest_list, paper_ingest_cancel,
-    )
-    from tools.mcp import (
-        mcp_list_servers, mcp_connect, mcp_disconnect,
-        mcp_list_tools, mcp_call_tool,
-    )
-    from agent.a2a.tools import (
-        plan_dispatch, job_status, job_list, job_wait, worker_list,
-    )
 
     return [
-        # Web 搜索和内容提取
-        web_search,
-        web_fetch,
-        web_scrape,
-        web_crawl,
-        web_map,
-        # arXiv 学术搜索
-        arxiv_search,
-        arxiv_get_by_id,
-        arxiv_download_pdf,
-        # 论文知识库 RAG
-        paper_search,
-        paper_list,
-        paper_stats,
-        # 论文入库
-        paper_ingest,
-        paper_ingest_status,
-        paper_ingest_list,
-        paper_ingest_cancel,
-        # 子代理
-        dispatch_agent,
-        list_subagents,
-        # Plan/Task 管理
-        plan_get,
-        # plan_execute,
-        task_add,
-        task_update,
-        task_delete,
-        task_get,
-        # A2A Worker 分发
+        # === 核心工具（合并后）===
+        web,
+        agent,
+        paper_kb,
+        task,
+
+        # === A2A Worker ===
         plan_dispatch,
         job_status,
         job_list,
         job_wait,
         worker_list,
-        # Skills
+
+        # === Skills ===
         load_skills,
         list_skills,
         skill_call,
-        # 文件搜索
+
+        # === 文件操作 ===
         grep,
         grep_count,
-        # 文件操作
         read,
         write,
         append,
         edit,
         edit_regex,
-        # Shell
         bash,
         bash_script,
-        # 文件查找
         glob,
         glob_list,
-        # MCP 工具
-        mcp_list_servers,
-        mcp_connect,
-        mcp_disconnect,
-        mcp_list_tools,
-        mcp_call_tool,
     ]

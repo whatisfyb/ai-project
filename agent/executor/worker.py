@@ -15,18 +15,12 @@ from utils.llm import get_llm_model
 
 def _get_worker_tools():
     """获取 Worker 可用的工具列表"""
-    from tools.web import web_search, web_fetch
-    from tools.web import arxiv_search, arxiv_download_pdf
-    from tools.web import web_scrape, web_crawl, web_map
+    from tools.web import web
+    from tools.paper_kb import paper_kb
 
     return [
-        web_search,
-        web_fetch,
-        arxiv_search,
-        arxiv_download_pdf,
-        web_scrape,
-        web_crawl,
-        web_map,
+        web,
+        paper_kb,
     ]
 
 

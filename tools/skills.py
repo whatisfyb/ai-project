@@ -350,8 +350,8 @@ def load_skills(names: list[str]) -> dict[str, Any]:
     Args:
         names: 要加载的技能名称列表
     """
-    # 调用原始加载函数，禁用缓存以确保重新加载
-    loaded = _load_skills_raw(names=names, cache=False)
+    # 调用原始加载函数，使用缓存
+    loaded = _load_skills_raw(names=names, cache=True)
     # 返回简化信息（不包含函数引用）
     result = {}
     for name, skill in loaded.items():

@@ -31,6 +31,31 @@ from agent.a2a.transport import (
     reset_transport,
 )
 
+from agent.a2a.client import (
+    A2AClient,
+    A2AClientPool,
+    A2AClientError,
+    get_client_pool,
+)
+
+from agent.a2a.server import A2AServer
+
+from agent.a2a.config import (
+    A2AConfig,
+    AgentEndpoint,
+    load_a2a_config,
+    get_a2a_config,
+    get_agent_endpoint,
+)
+
+from agent.a2a.protocol import (
+    JSONRPC_VERSION,
+    METHOD_MESSAGE_SEND,
+    METHOD_TASKS_GET,
+    METHOD_TASKS_CANCEL,
+    METHOD_AGENT_GET_CARD,
+)
+
 from agent.a2a.worker import (
     A2AWorker,
     A2AWorkerPool,
@@ -79,6 +104,25 @@ __all__ = [
     "MessageCallback",
     "get_transport",
     "reset_transport",
+    # Client
+    "A2AClient",
+    "A2AClientPool",
+    "A2AClientError",
+    "get_client_pool",
+    # Server
+    "A2AServer",
+    # Config
+    "A2AConfig",
+    "AgentEndpoint",
+    "load_a2a_config",
+    "get_a2a_config",
+    "get_agent_endpoint",
+    # Protocol
+    "JSONRPC_VERSION",
+    "METHOD_MESSAGE_SEND",
+    "METHOD_TASKS_GET",
+    "METHOD_TASKS_CANCEL",
+    "METHOD_AGENT_GET_CARD",
     # Worker
     "A2AWorker",
     "A2AWorkerPool",

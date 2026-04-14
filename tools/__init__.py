@@ -1,42 +1,27 @@
-"""Tools for LLM/Agent
-"""
+"""Tools for LLM/Agent"""
 
-from tools.web import (
-    web_search, web_fetch, web_scrape, web_crawl, web_map,
-    arxiv_search, arxiv_get_by_id, arxiv_download_pdf,
-)
+# 合并后的核心工具
+from tools.web import web
+from tools.agent import agent
+from tools.paper_kb import paper_kb
+from tools.task import task
+
+# Skills
 from tools.skills import load_skills, list_skills, get_skill, clear_skills_cache, skill_call
-from tools.agent import dispatch_agent, list_subagents
-from tools.task import (
-    plan_get, plan_execute,
-    task_add, task_update, task_delete, task_get,
-)
 
 __all__ = [
-    # Web search/fetch (Tavily + Firecrawl)
-    "web_search",
-    "web_fetch",
-    "web_scrape",
-    "web_crawl",
-    "web_map",
-    # arXiv
-    "arxiv_search",
-    "arxiv_get_by_id",
-    "arxiv_download_pdf",
+    # Web (merged: search, fetch, scrape, crawl, map, arxiv)
+    "web",
+    # Agent (merged: dispatch, list)
+    "agent",
+    # Paper KB (merged: search, list, stats, ingest)
+    "paper_kb",
+    # Task (merged: get_plan, add, update, delete, get)
+    "task",
     # Skills
     "load_skills",
     "list_skills",
     "skill_call",
     "get_skill",
     "clear_skills_cache",
-    # Agent
-    "dispatch_agent",
-    "list_subagents",
-    # Plan/Task management
-    "plan_get",
-    "plan_execute",
-    "task_add",
-    "task_update",
-    "task_delete",
-    "task_get",
 ]

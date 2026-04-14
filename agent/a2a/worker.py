@@ -35,15 +35,11 @@ from agent.core.signals import is_interrupted
 
 def _get_default_tools():
     """获取 Worker 默认可用工具"""
-    from tools.web import (
-        web_search, web_fetch,
-        arxiv_search, arxiv_download_pdf,
-        web_scrape, web_crawl, web_map,
-    )
+    from tools.web import web
+    from tools.paper_kb import paper_kb
     return [
-        web_search, web_fetch,
-        arxiv_search, arxiv_download_pdf,
-        web_scrape, web_crawl, web_map,
+        web,
+        paper_kb,
     ]
 
 
@@ -115,9 +111,8 @@ class A2AWorker:
         """构建 Agent Card"""
         skills = [
             Skill(name="execute_plantask", description="执行 PlanTask 任务"),
-            Skill(name="web_search", description="网络搜索"),
-            Skill(name="arxiv_search", description="学术论文搜索"),
-            Skill(name="web_scrape", description="网页抓取"),
+            Skill(name="web", description="Web 搜索、抓取、arXiv"),
+            Skill(name="paper_kb", description="论文知识库"),
         ]
 
         return AgentCard(

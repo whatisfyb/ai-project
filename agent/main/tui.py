@@ -176,19 +176,11 @@ class MainAgentTUI(App):
         self._update_status()
         self.worker_tracker.subscribe(self._on_worker_change)
         asyncio.create_task(self._background_checker())
-        asyncio.create_task(self._init_mcp())
 
         # 初始化命令处理器
         self._command_handler = CommandHandler(self)
 
         self.query_one("#input", Input).focus()
-
-    async def _init_mcp(self):
-        try:
-            from tools.mcp import init_mcp_from_config_async
-            await init_mcp_from_config_async(background=True)
-        except:
-            pass
 
     async def _background_checker(self):
         while True:

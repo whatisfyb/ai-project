@@ -4,13 +4,10 @@ from typing import Annotated, Any
 from typing_extensions import TypedDict
 import operator
 
-from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END, START
 
 from agent.subagents.base import BaseSubagent
-from agent.core.models import Plan, PlanTask
-from tools.web import web_search, web_fetch
-from tools.web import arxiv_search, arxiv_download_pdf
+from tools.web import web
 
 
 class ResearchAgentState(TypedDict):
@@ -45,7 +42,7 @@ class ResearchAgent(BaseSubagent[ResearchAgentState]):
 
     @property
     def tools(self) -> list:
-        return [web_search, web_fetch, arxiv_search, arxiv_download_pdf]
+        return [web]
 
     def _web_search_node(self, state: ResearchAgentState) -> dict:
         """网络搜索节点"""
@@ -77,13 +74,15 @@ KEYWORDS: 关键词1, 关键词2, 关键词3
             # 执行搜索
             for kw in keywords[:3]:
                 try:
-                    result = web_search.invoke({"query": kw, "max_results": 5})
-                    if "error" not in result:
+                    result = web.invoke({"action": "search", "query": kw, "max_results": 5})
+                    if result.get("status") != "error":
                         results.append({
                             "keyword": kw,
                             "results": result.get("results", []),
                             "answer": result.get("answer", ""),
                         })
+                    else:
+                        results.append({"keyword": kw, "error": result.get("error", "Unknown error")})
                 except Exception as e:
                     results.append({"keyword": kw, "error": str(e)})
 
@@ -119,9 +118,13 @@ KEYWORDS: 关键词1, 关键词2
             # 执行论文搜索
             for kw in keywords[:2]:
                 try:
-                    result = arxiv_search.invoke({"query": kw, "max_results": 5})
-                    if isinstance(result, list):
+                    result = web.invoke({"action": "arxiv_search", "query": kw, "max_results": 5})
+                    if isinstance(result, dict) and result.get("status") != "error":
+                        papers.extend(result.get("papers", []))
+                    elif isinstance(result, list):
                         papers.extend(result)
+                    else:
+                        papers.append({"error": result.get("error", "Unknown error"), "keyword": kw})
                 except Exception as e:
                     papers.append({"error": str(e), "keyword": kw})
 
