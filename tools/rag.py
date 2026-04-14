@@ -8,6 +8,8 @@ from langchain_core.tools import tool
 
 from utils.vector_store import VectorStore
 from utils.reranker import rerank_with_scores
+from utils.hybrid_search import HybridSearcher
+from utils.bm25 import get_bm25_index
 
 
 # 默认的 papers collection
@@ -21,6 +23,13 @@ def _get_paper_store() -> VectorStore:
         collection_name=DEFAULT_COLLECTION,
         persist_dir=DEFAULT_PERSIST_DIR,
     )
+
+
+def _get_hybrid_searcher() -> HybridSearcher:
+    """获取混合检索器"""
+    vector_store = _get_paper_store()
+    bm25_index = get_bm25_index()
+    return HybridSearcher(vector_store, bm25_index)
 
 
 # 重排序触发阈值：候选结果 >= 此值时才触发重排序
@@ -37,12 +46,13 @@ def paper_search(
     year_min: Optional[int] = None,
     year_max: Optional[int] = None,
     rerank: bool = True,
+    hybrid: bool = True,
 ) -> dict[str, Any]:
     """Search for relevant content from the paper knowledge base.
 
     Use this tool to retrieve information from previously indexed academic papers.
     Supports filtering by section type, author, keyword, and publication year.
-    Results are automatically reranked by a cross-encoder model for better relevance.
+    Uses hybrid search (vector + BM25) for better recall, and cross-encoder reranking for precision.
 
     Args:
         query: The search query describing what information you need
@@ -53,13 +63,12 @@ def paper_search(
         year_min: Minimum publication year (inclusive)
         year_max: Maximum publication year (inclusive)
         rerank: Whether to rerank results using cross-encoder (default: True)
+        hybrid: Whether to use hybrid search (vector + BM25) (default: True)
 
     Returns:
         Dictionary containing search results with paper metadata and relevant content
     """
     try:
-        store = _get_paper_store()
-
         # 构建元数据过滤条件
         filter_conditions = []
 
@@ -67,8 +76,6 @@ def paper_search(
             filter_conditions.append({"section": section})
 
         if author:
-            # ChromaDB 支持字符串包含，但语法略有不同
-            # 这里用简单的匹配
             filter_conditions.append({"authors": {"$contains": author}})
 
         if keyword:
@@ -86,11 +93,17 @@ def paper_search(
             if len(filter_conditions) == 1:
                 filter_dict = filter_conditions[0]
             else:
-                # 多条件 AND 组合
                 filter_dict = {"$and": filter_conditions}
 
         # 执行检索
-        results = store.similarity_search_with_score(query, k=top_k, filter=filter_dict)
+        if hybrid and not filter_dict:
+            # 混合检索（不支持元数据过滤）
+            searcher = _get_hybrid_searcher()
+            results = searcher.search(query, k=top_k, use_bm25=True)
+        else:
+            # 纯向量检索（支持元数据过滤）
+            store = _get_paper_store()
+            results = store.similarity_search_with_score(query, k=top_k, filter=filter_dict)
 
         # 重排序：候选结果 >= 阈值时触发
         if rerank and len(results) >= RERANK_MIN_CANDIDATES:
@@ -295,6 +308,36 @@ def paper_stats() -> dict[str, Any]:
             "total_chunks": total_chunks,
             "sections_count": sections,
             "years_count": dict(sorted(years.items())),
+        }
+
+    except Exception as e:
+        return {
+            "status": "error",
+            "error": str(e),
+        }
+
+
+@tool
+def paper_build_bm25_index() -> dict[str, Any]:
+    """Build BM25 index from the vector store for hybrid search.
+
+    Call this after ingesting new papers to enable BM25 + vector hybrid search.
+    The index is persisted to disk and loaded automatically on next search.
+
+    Returns:
+        Dictionary containing build status and document count
+    """
+    try:
+        searcher = _get_hybrid_searcher()
+        searcher.build_bm25_index()
+
+        bm25_index = get_bm25_index()
+        doc_count = bm25_index.count()
+
+        return {
+            "status": "success",
+            "message": f"BM25 索引构建完成，共 {doc_count} 篇文档",
+            "document_count": doc_count,
         }
 
     except Exception as e:
