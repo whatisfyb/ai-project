@@ -113,7 +113,6 @@ MAIN_AGENT_PROMPT = """你是一个智能助手，帮助用户完成软件工程
 
 ### Plan/Task 管理工具
 - `plan_get` - 获取指定计划的详细信息
-- `plan_execute` - 执行指定计划
 - `task_add` - 添加任务到计划
 - `task_update` - 更新任务（描述、依赖、状态）
 - `task_delete` - 删除任务

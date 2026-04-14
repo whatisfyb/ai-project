@@ -7,14 +7,14 @@ from typing import Optional
 from collections import OrderedDict
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, ScrollableContainer
-from textual.widgets import Header, Static, Input, Log
+from textual.containers import Horizontal
+from textual.widgets import Header, Static, Input, RichLog, Button
 from textual.reactive import reactive
 
 from agent.main.agent import create_main_agent
 from agent.main.command import CommandHandler, execute_tui_command
 from agent.core.registry import agent_registry, terminate
-from agent.core.signals import clear_interrupt
+from agent.core.signals import set_interrupt, clear_interrupt, is_interrupted
 from store.session import SessionStore
 from agent.a2a.dispatcher import get_inbox, get_agent_state, TaskResultStatus
 
@@ -94,6 +94,8 @@ class MainAgentTUI(App):
         height: 1fr;
         border: solid green;
         margin: 1;
+        overflow-x: hidden;
+        overflow-y: auto;
     }
 
     #worker-panel {
@@ -114,6 +116,11 @@ class MainAgentTUI(App):
         width: 1fr;
     }
 
+    #action-btn {
+        width: 8;
+        margin-left: 1;
+    }
+
     #status {
         height: 1;
         background: $primary;
@@ -131,7 +138,6 @@ class MainAgentTUI(App):
     # Reactive 状态
     session_title = reactive("")
     token_percent = reactive(0.0)
-    is_busy = reactive(False)
     inbox_count = reactive(0)
     running_count = reactive(0)
 
@@ -147,10 +153,11 @@ class MainAgentTUI(App):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
-        yield Log(id="chat-log")
+        yield RichLog(id="chat-log", wrap=True)
         yield Static(id="worker-panel")
         with Horizontal(id="input-row"):
             yield Input(placeholder="输入消息，/help 查看命令...", id="input")
+            yield Button("发送", id="action-btn", variant="primary")
         yield Static(" idle │ inbox: 0 │ workers: 0", id="status")
 
     def on_mount(self) -> None:
@@ -214,9 +221,9 @@ class MainAgentTUI(App):
 
         self.session_title = title
         self.token_percent = round(context_status.percent_used, 1)
-        self.is_busy = not self.agent_state.is_idle()
 
-        status_text = f" {'[yellow]busy[/yellow]' if self.is_busy else '[green]idle[/green]'} │ inbox: {self.inbox_count} │ workers: {self.running_count} │ {self.session_title} ({self.token_percent}%)"
+        busy = self.is_busy
+        status_text = f" {'[yellow]busy[/yellow]' if busy else '[green]idle[/green]'} │ inbox: {self.inbox_count} │ workers: {self.running_count} │ {self.session_title} ({self.token_percent}%)"
         self.query_one("#status", Static).update(status_text)
 
     def _update_worker_panel(self):
@@ -249,15 +256,15 @@ class MainAgentTUI(App):
     def _append_chat(self, text: str):
         """追加文本到聊天区"""
         try:
-            log = self.query_one("#chat-log", Log)
-            log.write_line(text)
+            log = self.query_one("#chat-log", RichLog)
+            log.write(text)
         except:
             pass
 
     def _clear_chat(self):
         """清空聊天"""
         try:
-            self.query_one("#chat-log", Log).clear()
+            self.query_one("#chat-log", RichLog).clear()
         except:
             pass
 
@@ -287,6 +294,63 @@ class MainAgentTUI(App):
         else:
             asyncio.create_task(self._call_agent(text))
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """按钮点击处理"""
+        if event.button.id != "action-btn":
+            return
+
+        if self.is_busy:
+            # 中断
+            self._do_interrupt()
+        else:
+            # 发送输入框内容
+            input_widget = self.query_one("#input", Input)
+            text = input_widget.value.strip()
+            if not text:
+                return
+
+            input_widget.value = ""
+            self._append_chat(f"You: {text}")
+
+            if text.startswith("/"):
+                asyncio.create_task(self._handle_command(text))
+            else:
+                asyncio.create_task(self._call_agent(text))
+
+    @property
+    def is_busy(self) -> bool:
+        """是否正在运行"""
+        return not self.agent_state.is_idle()
+
+    def _update_action_button(self):
+        """更新按钮状态"""
+        try:
+            btn = self.query_one("#action-btn", Button)
+            if self.is_busy:
+                btn.label = "中断"
+                btn.variant = "error"
+            else:
+                btn.label = "发送"
+                btn.variant = "primary"
+        except:
+            pass
+
+    def _do_interrupt(self):
+        """执行中断"""
+        # 1. 设置中断信号（MainAgent.chat_async 会检查）
+        set_interrupt()
+
+        # 2. 终止 Plan 执行器（如果有）
+        if agent_registry.is_running():
+            terminated = terminate()
+            if terminated:
+                self._append_chat(f"已终止任务: {', '.join(terminated)}")
+
+        self._append_chat("已中断")
+        self.agent_state.set_idle()
+        self._update_status()
+        self._update_action_button()
+
     async def _handle_command(self, cmd: str):
         """处理命令"""
         try:
@@ -311,12 +375,13 @@ class MainAgentTUI(App):
 
         self.agent_state.set_busy()
         self._update_status()
+        self._update_action_button()
 
         def on_token(token):
             # 直接写入，实现流式效果
             try:
-                log = self.query_one("#chat-log", Log)
-                log.write_line(token)
+                log = self.query_one("#chat-log", RichLog)
+                log.write(token)
             except:
                 pass
 
@@ -325,8 +390,11 @@ class MainAgentTUI(App):
         except Exception as e:
             self._append_chat(f"错误: {e}")
         finally:
+            # 清除中断信号
+            clear_interrupt()
             self.agent_state.set_idle()
             self._update_status()
+            self._update_action_button()
 
     async def _handle_inbox(self, results):
         self._append_chat("收到 Worker 任务结果...")
@@ -341,19 +409,22 @@ class MainAgentTUI(App):
 
         self.agent_state.set_busy()
         self._update_status()
+        self._update_action_button()
 
         def on_token(token):
             try:
-                log = self.query_one("#chat-log", Log)
-                log.write_line(token)
+                log = self.query_one("#chat-log", RichLog)
+                log.write(token)
             except:
                 pass
 
         try:
             await self.agent.chat_async(prompt, self.thread_id, on_token=on_token)
         finally:
+            clear_interrupt()
             self.agent_state.set_idle()
             self._update_status()
+            self._update_action_button()
 
     def action_interrupt(self):
         if agent_registry.is_running():

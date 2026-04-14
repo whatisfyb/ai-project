@@ -28,6 +28,7 @@ from agent.a2a.models import (
     Skill,
 )
 from agent.a2a.transport import InMemoryTransport, TaskCallback
+from agent.core.signals import is_interrupted
 
 
 # ============ Worker 工具获取 ============
@@ -232,6 +233,10 @@ class A2AWorker:
     def _work_loop(self) -> None:
         """工作线程主循环"""
         while self._running:
+            # 检查中断
+            if is_interrupted():
+                break
+
             try:
                 # 等待任务
                 item = self._task_queue.get(timeout=1)
@@ -241,6 +246,10 @@ class A2AWorker:
                     break
 
                 task, message = item
+
+                # 再次检查中断（任务开始前）
+                if is_interrupted():
+                    break
 
                 # 执行任务
                 self._execute_task(task, message)
@@ -256,6 +265,11 @@ class A2AWorker:
     def _execute_task(self, task: Task, message: Message) -> None:
         """执行单个任务"""
         self._current_task = task
+
+        # 执行结果（用于 finally 中报告）
+        final_status: TaskStatus = TaskStatus.WORKING
+        final_result: str | None = None
+        final_error: str | None = None
 
         # 获取任务描述（用于 UI 显示）
         plantask_info = self._extract_plantask_info(task, message)
@@ -295,6 +309,15 @@ class A2AWorker:
                 # 执行普通文本任务
                 result = self._execute_text_task(message, task)
 
+            # 检查是否被中断
+            if is_interrupted():
+                # 被中断，更新状态
+                self.transport.update_task_status(task.id, TaskStatus.CANCELLED)
+                final_status = TaskStatus.CANCELLED
+                final_result = result
+                final_error = "用户中断"
+                return
+
             # 添加结果消息
             result_msg = Message.agent_text(result)
             self.transport.add_task_message(task.id, result_msg)
@@ -303,11 +326,8 @@ class A2AWorker:
             self.transport.update_task_status(task.id, TaskStatus.COMPLETED)
             self._completed_count += 1
 
-            # 写入结果队列
-            self._report_task_result(task, TaskStatus.COMPLETED, result)
-
-            # 报告状态：完成
-            tracker.set_done(self.worker_id, success=True)
+            final_status = TaskStatus.COMPLETED
+            final_result = result
 
         except Exception as e:
             # 执行失败
@@ -319,14 +339,17 @@ class A2AWorker:
             self.transport.update_task_status(task.id, TaskStatus.FAILED)
             self._failed_count += 1
 
-            # 写入结果队列
-            self._report_task_result(task, TaskStatus.FAILED, None, str(e))
-
-            # 报告状态：失败
-            tracker.set_done(self.worker_id, success=False)
+            final_status = TaskStatus.FAILED
+            final_error = str(e)
 
         finally:
             self._current_task = None
+
+            # 无论如何都报告任务结果到 inbox
+            self._report_task_result(task, final_status, final_result, final_error)
+
+            # 报告状态：完成/失败
+            tracker.set_done(self.worker_id, success=(final_status == TaskStatus.COMPLETED))
 
     def _report_task_result(
         self,
@@ -425,6 +448,11 @@ class A2AWorker:
 
         # 多轮工具调用循环
         for _ in range(self.max_iterations):
+            # 检查中断
+            if is_interrupted():
+                store.update_task_status(plan_id, task_id, "pending", None)  # 重置状态
+                return "任务被中断"
+
             response = llm_with_tools.invoke(messages)
 
             if not hasattr(response, "tool_calls") or not response.tool_calls:
@@ -438,6 +466,12 @@ class A2AWorker:
 
             # 执行工具调用
             for tool_call in response.tool_calls:
+                # 检查中断
+                if is_interrupted():
+                    store.update_task_status(plan_id, task_id, "pending", None)
+                    return "任务被中断"
+
+                tool_name = tool_call["name"]
                 tool_name = tool_call["name"]
                 tool_args = tool_call["args"]
 
@@ -482,12 +516,20 @@ class A2AWorker:
         messages = [{"role": "user", "content": message.get_text()}]
 
         for _ in range(self.max_iterations):
+            # 检查中断
+            if is_interrupted():
+                return "任务被中断"
+
             response = llm_with_tools.invoke(messages)
 
             if not hasattr(response, "tool_calls") or not response.tool_calls:
                 return response.content
 
             for tool_call in response.tool_calls:
+                # 检查中断
+                if is_interrupted():
+                    return "任务被中断"
+
                 tool_name = tool_call["name"]
                 tool_args = tool_call["args"]
 

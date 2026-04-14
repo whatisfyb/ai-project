@@ -1,18 +1,16 @@
 """Main Agent 入口"""
 
 import sys
+import warnings
+
+# 抑制 jieba 的 pkg_resources 弃用警告
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
+
 
 def main():
     """主入口"""
-    # 默认使用 TUI
-    if len(sys.argv) > 1 and sys.argv[1] == "--repl":
-        # 传统 REPL 模式
-        from agent.main.repl import run_repl
-        run_repl()
-    else:
-        # TUI 模式（默认）
-        from agent.main.tui import run_tui
-        run_tui()
+    from agent.main.tui import run_tui
+    run_tui()
 
 
 if __name__ == "__main__":

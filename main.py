@@ -1,6 +1,6 @@
 """Main Agent 启动入口"""
 
-from agent.main.repl import run_repl
+from agent.main.tui import run_tui
 
 if __name__ == "__main__":
-    run_repl()
+    run_tui()
