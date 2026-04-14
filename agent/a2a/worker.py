@@ -257,12 +257,36 @@ class A2AWorker:
         """执行单个任务"""
         self._current_task = task
 
+        # 获取任务描述（用于 UI 显示）
+        plantask_info = self._extract_plantask_info(task, message)
+        task_description = ""
+        if plantask_info:
+            # 从 PlanStore 获取任务描述
+            from store.plan import PlanStore
+            store = PlanStore()
+            plan_id = plantask_info.get("plan_id", "")
+            task_id = plantask_info.get("task_id", "")
+            if plan_id and task_id:
+                plan = store.load_plan(plan_id)
+                if plan:
+                    for t in plan.tasks:
+                        if t.id == task_id:
+                            task_description = t.description
+                            break
+
+        # 报告状态：开始运行
+        from agent.main.tui import get_worker_tracker
+        tracker = get_worker_tracker()
+        tracker.set_running(
+            worker_id=self.worker_id,
+            task_id=task.plantask_id or task.id[:8],
+            description=task_description or "执行任务",
+            plan_id=task.plan_id or "",
+        )
+
         try:
             # 更新状态为 WORKING
             self.transport.update_task_status(task.id, TaskStatus.WORKING)
-
-            # 解析任务内容
-            plantask_info = self._extract_plantask_info(task, message)
 
             if plantask_info:
                 # 执行 PlanTask
@@ -282,6 +306,9 @@ class A2AWorker:
             # 写入结果队列
             self._report_task_result(task, TaskStatus.COMPLETED, result)
 
+            # 报告状态：完成
+            tracker.set_done(self.worker_id, success=True)
+
         except Exception as e:
             # 执行失败
             error_msg = f"执行失败: {str(e)}"
@@ -294,6 +321,9 @@ class A2AWorker:
 
             # 写入结果队列
             self._report_task_result(task, TaskStatus.FAILED, None, str(e))
+
+            # 报告状态：失败
+            tracker.set_done(self.worker_id, success=False)
 
         finally:
             self._current_task = None
