@@ -1,5 +1,6 @@
 """混合检索模块 - 向量检索 + BM25 + RRF 融合"""
 
+import asyncio
 from typing import Optional
 from langchain_core.documents import Document
 
@@ -64,7 +65,7 @@ def rrf_fusion(
 
 
 class HybridSearcher:
-    """混合检索器"""
+    """混合检索器（并发执行向量检索和 BM25 检索）"""
 
     def __init__(
         self,
@@ -93,38 +94,40 @@ class HybridSearcher:
         filter: Optional[dict] = None,
         use_bm25: bool = True,
     ) -> list[tuple[Document, float]]:
-        """混合检索
-
-        Args:
-            query: 查询文本
-            k: 返回数量
-            filter: 元数据过滤条件（仅向量检索支持）
-            use_bm25: 是否使用 BM25 混合
-
-        Returns:
-            (Document, score) 元组列表
-        """
-        # 向量检索
-        vector_results = self.vector_store.similarity_search_with_score(
-            query, k=k, filter=filter
-        )
-
+        """混合检索（协程并发执行）"""
         # 如果不用 BM25，直接返回向量结果
         if not use_bm25:
-            return vector_results
+            return self.vector_store.similarity_search_with_score(
+                query, k=k, filter=filter
+            )
 
-        # BM25 检索
-        bm25_results = self.bm25_index.search(query, k=k)
+        # 协程并发执行
+        return asyncio.run(self._search_async(query, k, filter))
 
-        # 如果 BM25 没有结果，返回向量结果
+    async def _search_async(
+        self,
+        query: str,
+        k: int,
+        filter: Optional[dict],
+    ) -> list[tuple[Document, float]]:
+        """异步并发检索"""
+        loop = asyncio.get_event_loop()
+        vector_task = loop.run_in_executor(
+            None,
+            self.vector_store.similarity_search_with_score,
+            query, k, filter
+        )
+        bm25_task = loop.run_in_executor(
+            None,
+            self.bm25_index.search,
+            query, k
+        )
+        vector_results, bm25_results = await asyncio.gather(vector_task, bm25_task)
+
         if not bm25_results:
             return vector_results
-
-        # 如果向量检索没有结果，返回 BM25 结果
         if not vector_results:
             return bm25_results
-
-        # RRF 融合
         return rrf_fusion(vector_results, bm25_results, top_k=k)
 
     def build_bm25_index(self):
