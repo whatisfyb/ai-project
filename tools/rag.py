@@ -7,6 +7,7 @@ from typing import Any, Optional, Literal
 from langchain_core.tools import tool
 
 from utils.vector_store import VectorStore
+from utils.reranker import rerank_with_scores
 
 
 # 默认的 papers collection
@@ -22,6 +23,10 @@ def _get_paper_store() -> VectorStore:
     )
 
 
+# 重排序触发阈值：候选结果 >= 此值时才触发重排序
+RERANK_MIN_CANDIDATES = 3
+
+
 @tool
 def paper_search(
     query: str,
@@ -31,11 +36,13 @@ def paper_search(
     keyword: Optional[str] = None,
     year_min: Optional[int] = None,
     year_max: Optional[int] = None,
+    rerank: bool = True,
 ) -> dict[str, Any]:
     """Search for relevant content from the paper knowledge base.
 
     Use this tool to retrieve information from previously indexed academic papers.
     Supports filtering by section type, author, keyword, and publication year.
+    Results are automatically reranked by a cross-encoder model for better relevance.
 
     Args:
         query: The search query describing what information you need
@@ -45,6 +52,7 @@ def paper_search(
         keyword: Filter by keyword (partial match)
         year_min: Minimum publication year (inclusive)
         year_max: Maximum publication year (inclusive)
+        rerank: Whether to rerank results using cross-encoder (default: True)
 
     Returns:
         Dictionary containing search results with paper metadata and relevant content
@@ -84,6 +92,13 @@ def paper_search(
         # 执行检索
         results = store.similarity_search_with_score(query, k=top_k, filter=filter_dict)
 
+        # 重排序：候选结果 >= 阈值时触发
+        if rerank and len(results) >= RERANK_MIN_CANDIDATES:
+            documents = [doc for doc, _ in results]
+            reranked = rerank_with_scores(query, documents, top_k=top_k)
+            # 用重排序分数替换原来的向量距离
+            results = [(doc, score) for doc, score in reranked]
+
         # 格式化结果
         formatted_results = []
         for doc, score in results:
@@ -115,7 +130,7 @@ def paper_search(
                 "source": meta.get("source", ""),
                 "section": meta.get("section", ""),
                 "content": doc.page_content,
-                "relevance_score": round(1 - score, 4) if score else None,
+                "relevance_score": round(float(score), 4) if score else None,
             })
 
         return {
