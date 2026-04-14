@@ -1,11 +1,11 @@
-"""混合检索模块 - 向量检索 + BM25 + RRF 融合"""
+"""混合检索模块 - 向量检索 + 全文检索 + RRF 融合"""
 
 import asyncio
 from typing import Optional
 from langchain_core.documents import Document
 
 from utils.vector_store import VectorStore
-from utils.bm25 import BM25Index, get_bm25_index
+from utils.whoosh_index import WhooshIndex, get_whoosh_index
 
 
 # RRF 融合参数
@@ -21,7 +21,7 @@ def rrf_fusion(
 
     Args:
         vector_results: 向量检索结果 [(Document, score), ...]
-        bm25_results: BM25 检索结果 [(Document, score), ...]
+        bm25_results: 全文检索结果 [(Document, score), ...]
         top_k: 返回数量
 
     Returns:
@@ -42,7 +42,7 @@ def rrf_fusion(
             old_doc, old_score = doc_scores[doc_id]
             doc_scores[doc_id] = (old_doc, old_score + rrf_score)
 
-    # 处理 BM25 检索结果
+    # 处理全文检索结果
     for rank, (doc, _) in enumerate(bm25_results):
         doc_id = doc.metadata.get("id", doc.page_content[:50])
         rrf_score = 1 / (RRF_K + rank + 1)
@@ -65,27 +65,21 @@ def rrf_fusion(
 
 
 class HybridSearcher:
-    """混合检索器（并发执行向量检索和 BM25 检索）"""
+    """混合检索器（并发执行向量检索和全文检索）"""
 
     def __init__(
         self,
         vector_store: VectorStore,
-        bm25_index: Optional[BM25Index] = None,
-        vector_weight: float = 1.0,
-        bm25_weight: float = 1.0,
+        whoosh_index: Optional[WhooshIndex] = None,
     ):
         """初始化混合检索器
 
         Args:
             vector_store: 向量存储
-            bm25_index: BM25 索引（可选，默认使用全局实例）
-            vector_weight: 向量检索权重（暂未使用，RRF 不需要）
-            bm25_weight: BM25 检索权重（暂未使用，RRF 不需要）
+            whoosh_index: Whoosh 索引（可选，默认使用全局实例）
         """
         self.vector_store = vector_store
-        self.bm25_index = bm25_index or get_bm25_index()
-        self.vector_weight = vector_weight
-        self.bm25_weight = bm25_weight
+        self.whoosh_index = whoosh_index or get_whoosh_index()
 
     def search(
         self,
@@ -95,7 +89,7 @@ class HybridSearcher:
         use_bm25: bool = True,
     ) -> list[tuple[Document, float]]:
         """混合检索（协程并发执行）"""
-        # 如果不用 BM25，直接返回向量结果
+        # 如果不用全文检索，直接返回向量结果
         if not use_bm25:
             return self.vector_store.similarity_search_with_score(
                 query, k=k, filter=filter
@@ -117,27 +111,45 @@ class HybridSearcher:
             self.vector_store.similarity_search_with_score,
             query, k, filter
         )
-        bm25_task = loop.run_in_executor(
+        whoosh_task = loop.run_in_executor(
             None,
-            self.bm25_index.search,
+            self.whoosh_index.search,
             query, k
         )
-        vector_results, bm25_results = await asyncio.gather(vector_task, bm25_task)
+        vector_results, whoosh_results = await asyncio.gather(vector_task, whoosh_task)
 
-        if not bm25_results:
+        if not whoosh_results:
             return vector_results
         if not vector_results:
-            return bm25_results
-        return rrf_fusion(vector_results, bm25_results, top_k=k)
+            return whoosh_results
+        return rrf_fusion(vector_results, whoosh_results, top_k=k)
 
-    def build_bm25_index(self):
-        """从向量库构建 BM25 索引"""
-        # 获取向量库中的所有文档
-        # ChromaDB 不支持直接获取所有文档，用空查询获取大量结果
+    def add_documents(
+        self,
+        documents: list[Document],
+        doc_ids: Optional[list[str]] = None,
+    ):
+        """增量添加文档到全文索引
+
+        Args:
+            documents: 文档列表
+            doc_ids: 文档 ID 列表
+        """
+        self.whoosh_index.add_documents(documents, doc_ids)
+
+    def delete_documents(self, doc_ids: list[str]):
+        """从全文索引删除文档
+
+        Args:
+            doc_ids: 文档 ID 列表
+        """
+        self.whoosh_index.delete_documents(doc_ids)
+
+    def build_index(self):
+        """从向量库构建全文索引（全量同步）"""
         all_docs = self.vector_store.similarity_search("", k=10000)
 
         if all_docs:
-            # 为文档生成 ID
             doc_ids = []
             for i, doc in enumerate(all_docs):
                 doc_id = doc.metadata.get("id", f"doc_{i}")
@@ -145,6 +157,4 @@ class HybridSearcher:
                     doc.metadata["id"] = doc_id
                 doc_ids.append(doc_id)
 
-            # 构建 BM25 索引
-            self.bm25_index.build(all_docs, doc_ids)
-            self.bm25_index.save()
+            self.whoosh_index.add_documents(all_docs, doc_ids)

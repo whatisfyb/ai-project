@@ -27,6 +27,22 @@ def reset_reranker():
     _reranker_model = None
 
 
+def preload_reranker_model() -> bool:
+    """预加载 Reranker 模型
+
+    Returns:
+        是否加载成功
+    """
+    try:
+        model = get_reranker()
+        # 预热：做一次 dummy predict
+        model.predict([("warmup", "warmup")])
+        return True
+    except Exception as e:
+        print(f"Reranker 模型预加载失败: {e}")
+        return False
+
+
 def rerank(
     query: str,
     documents: list[Document],

@@ -46,3 +46,19 @@ def reset_embedding_model():
     """重置 Embedding 实例"""
     global _embedding_model
     _embedding_model = None
+
+
+def preload_embedding_model() -> bool:
+    """预加载 Embedding 模型
+
+    Returns:
+        是否加载成功
+    """
+    try:
+        _get_model()
+        # 预热：做一次 dummy encode
+        _embedding_model.encode("warmup")
+        return True
+    except Exception as e:
+        print(f"Embedding 模型预加载失败: {e}")
+        return False

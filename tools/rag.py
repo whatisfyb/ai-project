@@ -9,7 +9,7 @@ from langchain_core.tools import tool
 from utils.vector_store import VectorStore
 from utils.reranker import rerank_with_scores
 from utils.hybrid_search import HybridSearcher
-from utils.bm25 import get_bm25_index
+from utils.whoosh_index import get_whoosh_index
 
 
 # 默认的 papers collection
@@ -28,8 +28,8 @@ def _get_paper_store() -> VectorStore:
 def _get_hybrid_searcher() -> HybridSearcher:
     """获取混合检索器"""
     vector_store = _get_paper_store()
-    bm25_index = get_bm25_index()
-    return HybridSearcher(vector_store, bm25_index)
+    whoosh_index = get_whoosh_index()
+    return HybridSearcher(vector_store, whoosh_index)
 
 
 # 重排序触发阈值：候选结果 >= 此值时才触发重排序
@@ -318,10 +318,10 @@ def paper_stats() -> dict[str, Any]:
 
 
 @tool
-def paper_build_bm25_index() -> dict[str, Any]:
-    """Build BM25 index from the vector store for hybrid search.
+def paper_build_index() -> dict[str, Any]:
+    """Build full-text index from the vector store for hybrid search.
 
-    Call this after ingesting new papers to enable BM25 + vector hybrid search.
+    Call this after ingesting new papers to enable full-text + vector hybrid search.
     The index is persisted to disk and loaded automatically on next search.
 
     Returns:
@@ -329,14 +329,14 @@ def paper_build_bm25_index() -> dict[str, Any]:
     """
     try:
         searcher = _get_hybrid_searcher()
-        searcher.build_bm25_index()
+        searcher.build_index()
 
-        bm25_index = get_bm25_index()
-        doc_count = bm25_index.count()
+        whoosh_index = get_whoosh_index()
+        doc_count = whoosh_index.count()
 
         return {
             "status": "success",
-            "message": f"BM25 索引构建完成，共 {doc_count} 篇文档",
+            "message": f"全文索引构建完成，共 {doc_count} 篇文档",
             "document_count": doc_count,
         }
 
