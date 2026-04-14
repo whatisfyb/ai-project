@@ -148,7 +148,7 @@ def plan_dispatch(plan_id: str, num_workers: int = 2) -> dict[str, Any]:
         )
 
         # 分发给 Worker（非阻塞）
-        transport.send_message(a2a_task, Message(
+        transport.message_send(a2a_task, Message(
             role="user",
             parts=[Part.plantask(plan_id=plan_id, task_id=plantask.id)]
         ))
@@ -183,7 +183,7 @@ def job_status(job_id: str) -> dict[str, Any]:
     """
     transport = get_transport()
 
-    task = transport.get_task(job_id)
+    task = transport.tasks_get(job_id)
     if not task:
         return {
             "status": "error",
@@ -268,7 +268,7 @@ def job_wait(job_id: str, timeout: int = 60) -> dict[str, Any]:
 
     transport = get_transport()
 
-    task = transport.get_task(job_id)
+    task = transport.tasks_get(job_id)
     if not task:
         return {
             "status": "error",
@@ -294,12 +294,12 @@ def job_wait(job_id: str, timeout: int = 60) -> dict[str, Any]:
             final_task["task"] = t
             done_event.set()
 
-    transport.subscribe_task(job_id, on_complete)
+    transport.tasks_subscribe(job_id, on_complete)
 
     # 等待完成或超时
     done_event.wait(timeout=timeout)
 
-    transport.unsubscribe_task(job_id, on_complete)
+    transport.tasks_unsubscribe(job_id, on_complete)
 
     # 直接返回状态
     final = final_task["task"]

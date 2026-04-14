@@ -71,9 +71,11 @@ class Transport(ABC):
         """
         pass
 
+    # ============ A2A 标准方法 ============
+
     @abstractmethod
-    def send_message(self, task: Task, message: Message) -> Task:
-        """发送消息
+    def message_send(self, task: Task, message: Message) -> Task:
+        """A2A message/send - 发送消息
 
         Args:
             task: 目标 Task
@@ -85,23 +87,29 @@ class Transport(ABC):
         pass
 
     @abstractmethod
-    def get_task(self, task_id: str) -> Task | None:
-        """获取 Task"""
+    def tasks_get(self, task_id: str) -> Task | None:
+        """A2A tasks/get - 获取 Task"""
         pass
+
+    @abstractmethod
+    def tasks_cancel(self, task_id: str) -> Task | None:
+        """A2A tasks/cancel - 取消 Task"""
+        pass
+
+    @abstractmethod
+    def tasks_subscribe(self, task_id: str, callback: TaskCallback) -> None:
+        """A2A tasks/subscribe - 订阅 Task 事件"""
+        pass
+
+    def tasks_unsubscribe(self, task_id: str, callback: TaskCallback) -> None:
+        """取消订阅 Task 事件"""
+        pass
+
+    # ============ 内部管理方法（非 A2A 标准）============
 
     @abstractmethod
     def update_task_status(self, task_id: str, status: TaskStatus) -> bool:
-        """更新 Task 状态"""
-        pass
-
-    @abstractmethod
-    def subscribe_task(self, task_id: str, callback: TaskCallback) -> None:
-        """订阅 Task 事件"""
-        pass
-
-    @abstractmethod
-    def unsubscribe_task(self, task_id: str, callback: TaskCallback) -> None:
-        """取消订阅"""
+        """更新 Task 状态（内部方法）"""
         pass
 
     @abstractmethod
@@ -223,11 +231,6 @@ class InMemoryTransport(Transport):
 
         return task
 
-    def get_task(self, task_id: str) -> Task | None:
-        """获取 Task"""
-        with self._lock:
-            return self._tasks.get(task_id)
-
     def update_task_status(self, task_id: str, status: TaskStatus) -> bool:
         """更新 Task 状态"""
         with self._lock:
@@ -275,10 +278,10 @@ class InMemoryTransport(Transport):
         self._emit_event(task, TaskEvent.ARTIFACT_ADDED)
         return True
 
-    # ============ 消息发送 ============
+    # ============ A2A 标准方法实现 ============
 
-    def send_message(self, task: Task, message: Message) -> Task:
-        """发送消息到目标 Agent
+    def message_send(self, task: Task, message: Message) -> Task:
+        """A2A message/send - 发送消息到目标 Agent
 
         直接调用目标 Agent 的 handler，无 HTTP 开销。
 
@@ -314,6 +317,41 @@ class InMemoryTransport(Transport):
 
         return task
 
+    def tasks_get(self, task_id: str) -> Task | None:
+        """A2A tasks/get - 获取 Task"""
+        with self._lock:
+            return self._tasks.get(task_id)
+
+    def tasks_cancel(self, task_id: str) -> Task | None:
+        """A2A tasks/cancel - 取消 Task"""
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if not task:
+                return None
+
+            if task.is_terminal():
+                return task  # 已经是终态，无法取消
+
+            task.update_status(TaskStatus.CANCELLED)
+
+        self._emit_event(task, TaskEvent.STATUS_CHANGED)
+        return task
+
+    def tasks_subscribe(self, task_id: str, callback: TaskCallback) -> None:
+        """A2A tasks/subscribe - 订阅特定 Task 的事件"""
+        with self._lock:
+            if task_id not in self._subscribers:
+                self._subscribers[task_id] = set()
+            self._subscribers[task_id].add(callback)
+
+    def tasks_unsubscribe(self, task_id: str, callback: TaskCallback) -> None:
+        """取消订阅"""
+        with self._lock:
+            if task_id in self._subscribers:
+                self._subscribers[task_id].discard(callback)
+
+    # ============ 内部管理方法 ============
+
     def send_message_to_agent(self, agent_id: str, task: Task, message: Message) -> Task:
         """向指定 Agent 发送消息（忽略 task.receiver_id）
 
@@ -329,21 +367,6 @@ class InMemoryTransport(Transport):
 
         handler(task, message)
         return task
-
-    # ============ 订阅机制 ============
-
-    def subscribe_task(self, task_id: str, callback: TaskCallback) -> None:
-        """订阅特定 Task 的事件"""
-        with self._lock:
-            if task_id not in self._subscribers:
-                self._subscribers[task_id] = set()
-            self._subscribers[task_id].add(callback)
-
-    def unsubscribe_task(self, task_id: str, callback: TaskCallback) -> None:
-        """取消订阅"""
-        with self._lock:
-            if task_id in self._subscribers:
-                self._subscribers[task_id].discard(callback)
 
     def subscribe_all(self, callback: TaskCallback) -> None:
         """订阅所有 Task 事件"""
