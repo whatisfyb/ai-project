@@ -8,7 +8,7 @@ from langchain_core.tools import BaseTool, ToolException
 from pydantic import create_model, Field
 from pydantic.fields import FieldInfo
 
-from agent.mcp.manager import get_mcp_manager
+from mcp.manager import get_mcp_manager
 
 
 def create_mcp_tool(server_name: str, mcp_tool) -> BaseTool:

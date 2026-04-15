@@ -1,6 +1,6 @@
 """工具注册与初始化"""
 
-from agent.mcp.tools import load_mcp_tools
+from mcp.tools import load_mcp_tools
 
 
 def get_main_agent_tools() -> list:

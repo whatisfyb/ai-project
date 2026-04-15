@@ -1,7 +1,7 @@
 """Tests for MCP data models"""
 
 import pytest
-from agent.mcp.models import (
+from mcp.models import (
     JSONRPCRequest,
     JSONRPCResponse,
     MCPCapabilities,

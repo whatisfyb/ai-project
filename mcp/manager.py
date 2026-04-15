@@ -3,7 +3,7 @@
 import threading
 from typing import Any
 
-from agent.mcp.client import MCPClient, MCPClientError
+from mcp.client import MCPClient, MCPClientError
 
 
 class MCPManager:

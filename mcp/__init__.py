@@ -5,7 +5,7 @@ Provides MCP client functionality to connect to external MCP servers
 and use their tools as LangChain tools.
 """
 
-from agent.mcp.models import (
+from mcp.models import (
     JSONRPCRequest,
     JSONRPCResponse,
     MCPCapabilities,
@@ -14,9 +14,9 @@ from agent.mcp.models import (
     MCPTool,
     ToolCallResult,
 )
-from agent.mcp.client import MCPClient, MCPClientError
-from agent.mcp.manager import MCPManager, get_mcp_manager
-from agent.mcp.tools import load_mcp_tools, get_mcp_tool_info, create_mcp_tool
+from mcp.client import MCPClient, MCPClientError
+from mcp.manager import MCPManager, get_mcp_manager
+from mcp.tools import load_mcp_tools, get_mcp_tool_info, create_mcp_tool
 
 __all__ = [
     # Models

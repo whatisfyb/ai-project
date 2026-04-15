@@ -4,7 +4,7 @@ import json
 import httpx
 from typing import Any
 
-from agent.mcp.models import (
+from mcp.models import (
     JSONRPCRequest,
     JSONRPCResponse,
     InitializeResult,
