@@ -62,3 +62,35 @@ a2a:
     #   url: "http://localhost:8001"
     #   description: "研究分析 Agent"
     #   api_key: "your-api-key"  # 可选
+
+# ============ MCP Server 配置 ============
+# Model Context Protocol servers for tool integration
+mcp:
+  servers:
+    # Transport types:
+    # - http: Standard HTTP JSON-RPC
+    # - sse: Server-Sent Events
+    # - streamable: Streamable HTTP (SSE response with JSON-RPC)
+
+    # Example: Tavily MCP Server (streamable HTTP)
+    # tavily:
+    #   transport: streamable
+    #   url: https://mcp.tavily.com/mcp/?tavilyApiKey=your-api-key
+    #   enabled: true
+    #   timeout: 60
+
+    # Example: filesystem server (SSE)
+    # filesystem:
+    #   transport: sse
+    #   url: http://localhost:8080
+    #   enabled: true
+    #   timeout: 30
+
+    # Example: postgres server with auth (HTTP)
+    # postgres:
+    #   transport: http
+    #   url: http://localhost:8081/mcp
+    #   enabled: false
+    #   timeout: 30
+    #   headers:
+    #     Authorization: Bearer xxx

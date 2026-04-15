@@ -38,6 +38,9 @@ class MainAgent:
         Args:
             context_window: 模型上下文窗口大小（token 数），不填则从配置读取
         """
+        self._graph = None
+        self._checkpointer = None
+
         self.llm = get_llm_model()
 
         # 从配置读取 context_window
@@ -47,8 +50,6 @@ class MainAgent:
 
         self.context_window = context_window
         self._init_tools()
-        self._graph = None
-        self._checkpointer = None
 
     def _init_tools(self):
         """初始化工具"""

@@ -1,5 +1,7 @@
 """工具注册与初始化"""
 
+from agent.mcp.tools import load_mcp_tools
+
 
 def get_main_agent_tools() -> list:
     """获取 Main Agent 可用的工具列表
@@ -29,6 +31,9 @@ def get_main_agent_tools() -> list:
     from tools.edit import edit, edit_regex
     from tools.bash import bash, bash_script
     from tools.glob import glob, glob_list
+
+    # MCP 工具
+    mcp_tools = load_mcp_tools()
 
     return [
         # === 核心工具（合并后）===
@@ -61,4 +66,7 @@ def get_main_agent_tools() -> list:
         bash_script,
         glob,
         glob_list,
+
+        # === MCP 工具 ===
+        *mcp_tools,
     ]

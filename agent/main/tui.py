@@ -429,6 +429,11 @@ class MainAgentTUI(App):
 
 
 def run_tui():
+    # Initialize MCP before starting TUI
+    from agent.mcp.manager import get_mcp_manager
+    mcp_manager = get_mcp_manager()
+    mcp_manager.initialize()
+
     app = MainAgentTUI()
     app.run()
 

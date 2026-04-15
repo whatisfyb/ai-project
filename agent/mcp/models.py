@@ -48,14 +48,32 @@ class JSONRPCResponse(BaseModel):
 # ============ MCP Capabilities ============
 
 class MCPCapabilities(BaseModel):
-    """Server capabilities"""
-    tools: bool = False
-    resources: bool = False
-    prompts: bool = False
+    """Server capabilities
+
+    Note: tools, resources, prompts can be bool or dict with additional options
+    e.g., {'tools': {'listChanged': True}} or {'tools': True}
+    """
+    tools: bool | dict[str, Any] = False
+    resources: bool | dict[str, Any] = False
+    prompts: bool | dict[str, Any] = False
+
+    def has_tools(self) -> bool:
+        """Check if server supports tools"""
+        return bool(self.tools)
+
+    def has_resources(self) -> bool:
+        """Check if server supports resources"""
+        return bool(self.resources)
+
+    def has_prompts(self) -> bool:
+        """Check if server supports prompts"""
+        return bool(self.prompts)
 
 
 class InitializeResult(BaseModel):
     """Initialize response from MCP server"""
+    model_config = {"populate_by_name": True}
+
     protocol_version: str = Field(alias="protocolVersion")
     capabilities: MCPCapabilities
     server_info: dict[str, str] = Field(alias="serverInfo")

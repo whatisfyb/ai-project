@@ -207,6 +207,51 @@ class CompactSettings:
         return _parse_token_value(value) or 8_000
 
 
+class MCPServerConfig:
+    """Single MCP Server configuration"""
+
+    def __init__(
+        self,
+        transport: str = "http",
+        url: str = "",
+        enabled: bool = True,
+        timeout: int = 30,
+        headers: dict | None = None,
+    ):
+        self.transport = transport
+        self.url = url
+        self.enabled = enabled
+        self.timeout = timeout
+        self.headers = headers
+
+
+class MCPConfig:
+    """MCP configuration"""
+
+    def __init__(self, data: dict):
+        self._data = data.get("mcp", {})
+        self._servers: dict[str, MCPServerConfig] = {}
+        self._load_servers()
+
+    def _load_servers(self):
+        """Load server configurations"""
+        servers_data = self._data.get("servers", {})
+        for name, cfg in servers_data.items():
+            if isinstance(cfg, dict):
+                self._servers[name] = MCPServerConfig(
+                    transport=cfg.get("transport", "http"),
+                    url=cfg.get("url", ""),
+                    enabled=cfg.get("enabled", True),
+                    timeout=cfg.get("timeout", 30),
+                    headers=cfg.get("headers"),
+                )
+
+    @property
+    def servers(self) -> dict[str, MCPServerConfig]:
+        """Get all server configurations"""
+        return self._servers
+
+
 class Settings:
     """应用全局配置"""
 
@@ -218,6 +263,7 @@ class Settings:
         self.firecrawl = FirecrawlSettings(data)
         self.langsmith = LangSmithSettings(data)
         self.compact = CompactSettings(data)
+        self.mcp = MCPConfig(data)
 
 
 # ============ 上下文管理 ============

@@ -105,6 +105,17 @@ MAIN_AGENT_PROMPT = """你是一个智能助手，帮助用户完成软件工程
 ### Skills
 - `list_skills` / `load_skills` / `skill_call`
 
+### MCP 工具（外部服务）
+
+MCP (Model Context Protocol) 工具通过外部 MCP 服务器提供，在配置中声明后自动加载。
+
+**工具命名格式**: `mcp_{server_name}_{tool_name}`
+**工具描述前缀**: `[MCP:server_name]`
+
+**使用方式**: 根据工具描述和参数 schema 直接调用
+
+**注意**: MCP 工具是动态加载的，具体可用工具取决于配置文件中启用的 MCP 服务器。调用前请查看工具描述了解其功能。
+
 ## 工具使用规则
 
 ### 优先使用专用工具
