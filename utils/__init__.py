@@ -24,6 +24,17 @@ from utils.chunk_model import Chunk, ChunkType
 # Pipeline exports
 from utils.chunk_pipeline import SplitterPipeline
 
+# JSON-RPC exports
+from utils.jsonrpc import (
+    JSONRPCRequest,
+    JSONRPCResponse,
+    JSONRPCErrorCodes,
+    JSONRPC_VERSION,
+    make_request,
+    make_success_response,
+    make_error_response,
+)
+
 __all__ = [
     # LLM
     "get_llm_model",
@@ -56,4 +67,12 @@ __all__ = [
     "Retriever",
     "create_retriever",
     "MultiRetriever",
+    # JSON-RPC
+    "JSONRPCRequest",
+    "JSONRPCResponse",
+    "JSONRPCErrorCodes",
+    "JSONRPC_VERSION",
+    "make_request",
+    "make_success_response",
+    "make_error_response",
 ]
