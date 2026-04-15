@@ -34,12 +34,47 @@ from agent.core.signals import is_interrupted
 # ============ Worker 工具获取 ============
 
 def _get_default_tools():
-    """获取 Worker 默认可用工具"""
+    """获取 Worker 默认可用工具
+
+    Worker 可用的工具集：
+    - web: Web 搜索、抓取、arXiv
+    - paper_kb: 论文知识库
+    - read: 文件读取
+    - write: 文件写入
+    - grep: 文件内容搜索
+    - glob: 文件搜索
+    - bash: Shell 命令执行
+    """
     from tools.web import web
     from tools.paper_kb import paper_kb
+    from tools.read import read
+    from tools.write import write, append
+    from tools.edit import edit, edit_regex
+    from tools.grep import grep, grep_count
+    from tools.glob import glob, glob_list
+    from tools.bash import bash, bash_script
+
     return [
+        # Web 和知识库
         web,
         paper_kb,
+
+        # 文件操作
+        read,
+        write,
+        append,
+        edit,
+        edit_regex,
+
+        # 搜索
+        grep,
+        grep_count,
+        glob,
+        glob_list,
+
+        # Shell
+        bash,
+        bash_script,
     ]
 
 
@@ -110,15 +145,30 @@ class A2AWorker:
     def _build_card(self) -> AgentCard:
         """构建 Agent Card"""
         skills = [
+            # 核心能力
             Skill(name="execute_plantask", description="执行 PlanTask 任务"),
-            Skill(name="web", description="Web 搜索、抓取、arXiv"),
-            Skill(name="paper_kb", description="论文知识库"),
+
+            # Web 和知识库
+            Skill(name="web", description="Web 搜索、抓取、arXiv 论文搜索"),
+            Skill(name="paper_kb", description="论文知识库查询"),
+
+            # 文件操作
+            Skill(name="read", description="读取文件内容"),
+            Skill(name="write", description="写入文件"),
+            Skill(name="edit", description="编辑文件"),
+
+            # 搜索
+            Skill(name="grep", description="文件内容搜索"),
+            Skill(name="glob", description="文件名搜索"),
+
+            # Shell
+            Skill(name="bash", description="执行 Shell 命令"),
         ]
 
         return AgentCard(
             id=self.worker_id,
             name=f"Worker-{self.worker_id}",
-            description="任务执行器，接收并执行 A2A Task",
+            description="任务执行器，接收并执行 A2A Task，支持 Web 搜索、文件操作、Shell 命令等",
             capabilities=AgentCapabilities(
                 text=True,
                 files=True,
@@ -436,8 +486,17 @@ class A2AWorker:
 
 任务描述：{plantask.description}
 
-请直接执行任务并返回结果。如果需要搜索信息、获取数据等，可以使用工具辅助。
-使用中文回答。"""
+可用工具：
+- web: Web 搜索、抓取网页、arXiv 论文搜索
+- paper_kb: 论文知识库查询
+- read: 读取文件内容
+- write/append: 写入文件
+- edit/edit_regex: 编辑文件
+- grep/grep_count: 文件内容搜索
+- glob/glob_list: 文件名搜索
+- bash/bash_script: 执行 Shell 命令
+
+请根据任务需要选择合适的工具执行。使用中文回答。"""
 
         messages = [{"role": "user", "content": task_prompt}]
 

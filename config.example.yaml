@@ -49,9 +49,25 @@ langsmith:
 compact:
   auto_enabled: true        # 是否启用自动压缩
   threshold_pct: 0.80       # 触发阈值（80% 时触发）
-  keep_recent: 10           # 保留最近消息数
   buffer_tokens: 10K        # 缓冲区 tokens（支持 K/M 单位）
   output_reserve: 8K        # 输出预留 tokens（支持 K/M 单位）
+
+  # 分割模式
+  use_token_budget: true    # 是否使用 Token 预算模式（推荐）
+  tail_budget_ratio: 0.20   # 尾部 Token 预算比例（相对于有效上下文窗口）
+  keep_recent: 10           # 保留最近消息数（仅当 use_token_budget=false 时生效）
+
+  # 微压缩配置
+  micro_compact:
+    enabled: true           # 是否启用微压缩（清理旧工具结果）
+    keep_recent: 5          # 微压缩保留最近 N 个工具结果
+
+  # 断路器配置（防止无效压缩循环）
+  circuit_breaker:
+    enabled: true           # 是否启用断路器
+    min_savings_pct: 0.10   # 最低节省比例（低于此值视为无效压缩）
+    consecutive_failures: 2 # 连续 N 次无效压缩则触发断路器
+    reset_after_seconds: 300 # 断路器自动重置时间（秒）
 
 # ============ A2A 外部 Agent 配置 ============
 # 配置外部 A2A Agent 的连接信息

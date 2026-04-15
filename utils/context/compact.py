@@ -133,7 +133,7 @@ def find_split_point(
     messages: list[dict],
     keep_recent: int = 10,
 ) -> tuple[list[dict], list[dict]]:
-    """找到分割点，保留最近的消息
+    """找到分割点，保留最近的消息（基于消息数）
 
     确保工具调用链完整：
     - ToolMessage 必须跟在有 tool_calls 的 AIMessage 后面
@@ -178,6 +178,106 @@ def find_split_point(
             break
 
     return messages[:split_idx], messages[split_idx:]
+
+
+def find_split_point_by_tokens(
+    messages: list[dict],
+    token_budget: int,
+) -> tuple[list[dict], list[dict]]:
+    """找到分割点，基于 Token 预算保留最近的消息
+
+    从后往前累积 token，直到达到预算，确保工具调用链完整。
+
+    Args:
+        messages: 消息列表
+        token_budget: 尾部保留的 token 预算
+
+    Returns:
+        (to_summarize, to_keep) 分割后的消息
+    """
+    if not messages:
+        return [], []
+
+    # 从后往前累积 token
+    total_tokens = 0
+    split_idx = len(messages)
+
+    for i in range(len(messages) - 1, -1, -1):
+        msg = messages[i]
+        msg_tokens = count_messages_tokens([msg])
+        total_tokens += msg_tokens
+
+        if total_tokens >= token_budget:
+            split_idx = i
+            break
+
+    # 如果所有消息都在预算内，不需要压缩
+    if split_idx == len(messages):
+        return [], messages
+
+    # 调整分割点，确保不破坏工具调用链
+    split_idx = _adjust_split_for_tool_chain(messages, split_idx)
+
+    return messages[:split_idx], messages[split_idx:]
+
+
+def _adjust_split_for_tool_chain(messages: list[dict], split_idx: int) -> int:
+    """调整分割点，确保不破坏工具调用链
+
+    规则：
+    1. 不能在 ToolMessage 中间分割（需要包含对应的 AIMessage）
+    2. 不能在 AIMessage 和其 ToolMessage 之间分割
+
+    Args:
+        messages: 消息列表
+        split_idx: 初始分割点
+
+    Returns:
+        调整后的分割点
+    """
+    if split_idx <= 0 or split_idx >= len(messages):
+        return split_idx
+
+    msg = messages[split_idx]
+
+    # 情况1：分割点是 ToolMessage
+    if msg['role'] == 'tool':
+        # 找到对应的 AIMessage（有 tool_calls）
+        for i in range(split_idx - 1, -1, -1):
+            m = messages[i]
+            if m['role'] == 'assistant':
+                metadata = m.get('metadata') or {}
+                if 'tool_calls' in metadata:
+                    # 找到了，分割点移到 AIMessage 之前
+                    return i
+        # 没找到对应的 AIMessage，保留这条 tool 消息
+        return split_idx
+
+    # 情况2：分割点是 AIMessage，检查是否有未包含的 ToolMessage
+    if msg['role'] == 'assistant':
+        metadata = msg.get('metadata') or {}
+        if 'tool_calls' in metadata:
+            # 这条消息有工具调用，需要检查后面的 ToolMessage 是否被包含
+            # 由于我们从后往前遍历，如果 split_idx 指向 AIMessage，
+            # 后面的 ToolMessage 应该已经被包含在 to_keep 中
+            # 但为了安全，我们把分割点往前移
+            return split_idx
+
+    # 情况3：检查 split_idx 前面是否有孤立的 ToolMessage
+    # 如果前一条消息是 ToolMessage，需要找到它的 AIMessage
+    if split_idx > 0 and messages[split_idx - 1]['role'] == 'tool':
+        # 往前找到 AIMessage
+        for i in range(split_idx - 1, -1, -1):
+            m = messages[i]
+            if m['role'] == 'assistant':
+                metadata = m.get('metadata') or {}
+                if 'tool_calls' in metadata:
+                    # 找到了，分割点移到 AIMessage
+                    return i
+        # 没找到，保持原分割点
+        return split_idx
+
+    return split_idx
 
 
 async def generate_summary(
@@ -275,13 +375,29 @@ async def compact_messages(
     messages: list[dict],
     keep_recent: int = 10,
     llm=None,
+    enable_micro_compact: bool = True,
+    micro_compact_keep_recent: int = 5,
+    use_token_budget: bool = True,
+    token_budget: int | None = None,
 ) -> dict[str, Any]:
     """压缩消息列表
 
+    压缩流程：
+    1. 微压缩：清理旧的工具结果（可选）
+    2. 摘要压缩：生成对话摘要
+
+    支持两种分割模式：
+    - Token 预算模式（推荐）：基于 token 数量保留尾部消息
+    - 消息数模式：基于消息数量保留尾部消息
+
     Args:
         messages: 消息列表
-        keep_recent: 保留最近 N 条消息
+        keep_recent: 保留最近 N 条消息（仅当 use_token_budget=False 时生效）
         llm: LLM 实例
+        enable_micro_compact: 是否启用微压缩（默认 True）
+        micro_compact_keep_recent: 微压缩保留最近 N 个工具结果（默认 5）
+        use_token_budget: 是否使用 Token 预算模式（默认 True）
+        token_budget: 尾部 Token 预算（仅当 use_token_budget=True 时生效）
 
     Returns:
         {
@@ -290,33 +406,52 @@ async def compact_messages(
             'tokens_before': 压缩前 token 数,
             'tokens_after': 压缩后 token 数,
             'messages_removed': 移除的消息数,
+            'micro_compact': 微压缩统计（如果启用）,
+            'split_mode': 分割模式 ('token_budget' 或 'message_count'),
         }
     """
-    if len(messages) <= keep_recent:
-        return {
-            'compact_messages': messages,
-            'summary': None,
-            'tokens_before': count_messages_tokens(messages),
-            'tokens_after': count_messages_tokens(messages),
-            'messages_removed': 0,
-        }
+    # 计算压缩前 token 数
+    tokens_before = count_messages_tokens(messages)
 
-    # 分割消息
-    to_summarize, to_keep = find_split_point(messages, keep_recent)
+    # 1. 微压缩：清理旧的工具结果
+    micro_result = None
+    if enable_micro_compact:
+        from utils.context.micro_compact import micro_compact_messages
+        micro_result = micro_compact_messages(messages, keep_recent=micro_compact_keep_recent)
+        messages = micro_result["messages"]
+
+    # 2. 分割消息
+    if use_token_budget and token_budget:
+        # Token 预算模式
+        to_summarize, to_keep = find_split_point_by_tokens(messages, token_budget)
+        split_mode = "token_budget"
+    else:
+        # 消息数模式
+        if len(messages) <= keep_recent:
+            return {
+                'compact_messages': messages,
+                'summary': None,
+                'tokens_before': tokens_before,
+                'tokens_after': count_messages_tokens(messages),
+                'messages_removed': 0,
+                'micro_compact': micro_result,
+                'split_mode': 'message_count',
+            }
+        to_summarize, to_keep = find_split_point(messages, keep_recent)
+        split_mode = "message_count"
 
     if not to_summarize:
         return {
             'compact_messages': to_keep,
             'summary': None,
-            'tokens_before': count_messages_tokens(messages),
+            'tokens_before': tokens_before,
             'tokens_after': count_messages_tokens(to_keep),
             'messages_removed': 0,
+            'micro_compact': micro_result,
+            'split_mode': split_mode,
         }
 
-    # 计算压缩前 token 数
-    tokens_before = count_messages_tokens(messages)
-
-    # 生成摘要
+    # 3. 生成摘要
     summary = await generate_summary(to_summarize, llm)
 
     # 创建摘要消息
@@ -334,4 +469,7 @@ async def compact_messages(
         'tokens_before': tokens_before,
         'tokens_after': tokens_after,
         'messages_removed': len(to_summarize),
+        'messages_kept': len(to_keep),
+        'micro_compact': micro_result,
+        'split_mode': split_mode,
     }

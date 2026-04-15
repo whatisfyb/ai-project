@@ -191,7 +191,7 @@ class CompactSettings:
 
     @property
     def keep_recent(self) -> int:
-        """保留最近消息数"""
+        """保留最近消息数（仅当 use_token_budget=False 时生效）"""
         return self._data.get("keep_recent", 10)
 
     @property
@@ -205,6 +205,55 @@ class CompactSettings:
         """输出预留 tokens（支持 K/M 单位）"""
         value = self._data.get("output_reserve", 8_000)
         return _parse_token_value(value) or 8_000
+
+    @property
+    def use_token_budget(self) -> bool:
+        """是否使用 Token 预算模式（默认 True）"""
+        return self._data.get("use_token_budget", True)
+
+    @property
+    def tail_budget_ratio(self) -> float:
+        """尾部 Token 预算比例（相对于有效上下文窗口）
+
+        例如：0.20 表示保留 20% 的有效窗口给尾部消息
+        """
+        return self._data.get("tail_budget_ratio", 0.20)
+
+    @property
+    def micro_compact_enabled(self) -> bool:
+        """是否启用微压缩"""
+        micro_config = self._data.get("micro_compact", {})
+        return micro_config.get("enabled", True)
+
+    @property
+    def micro_compact_keep_recent(self) -> int:
+        """微压缩保留最近 N 个工具结果"""
+        micro_config = self._data.get("micro_compact", {})
+        return micro_config.get("keep_recent", 5)
+
+    @property
+    def circuit_breaker_enabled(self) -> bool:
+        """是否启用断路器"""
+        cb_config = self._data.get("circuit_breaker", {})
+        return cb_config.get("enabled", True)
+
+    @property
+    def circuit_breaker_min_savings(self) -> float:
+        """断路器最低节省比例"""
+        cb_config = self._data.get("circuit_breaker", {})
+        return cb_config.get("min_savings_pct", 0.10)
+
+    @property
+    def circuit_breaker_consecutive(self) -> int:
+        """断路器连续失败次数阈值"""
+        cb_config = self._data.get("circuit_breaker", {})
+        return cb_config.get("consecutive_failures", 2)
+
+    @property
+    def circuit_breaker_reset_seconds(self) -> float:
+        """断路器自动重置时间（秒）"""
+        cb_config = self._data.get("circuit_breaker", {})
+        return cb_config.get("reset_after_seconds", 300.0)
 
 
 class MCPServerConfig:

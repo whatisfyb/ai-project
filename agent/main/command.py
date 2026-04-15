@@ -186,7 +186,7 @@ class CommandHandler:
         session = self.session_store.get_session(self.thread_id)
         total_tokens = session.get("total_tokens", 0) if session else 0
         self._append(f"压缩前: {total_tokens:,} tokens")
-        self._append("正在生成摘要...")
+        self._append("正在压缩...")
 
         try:
             result = await compact_session(self.thread_id, self.agent.context_window)
@@ -198,10 +198,15 @@ class CommandHandler:
                 self._append(f"  - 保留消息: {result['messages_kept']} 条")
                 self._append(f"  - Token: {result['tokens_before']:,} → {result['tokens_after']:,} (节省 {saved:,})")
 
+                # 显示微压缩统计
+                micro = result.get("micro_compact")
+                if micro and micro.get("tools_cleared", 0) > 0:
+                    self._append(f"  - 微压缩: 清理 {micro['tools_cleared']} 个旧工具结果, 节省 {micro['tokens_saved']:,} tokens")
+
                 summary = result.get("summary", "")
-                if len(summary) > 300:
-                    summary = summary[:300] + "..."
-                self._append(f"\n摘要: {summary}")
+                if summary and len(summary) > 100:
+                    summary = summary[:100] + "..."
+                    self._append(f"\n摘要预览: {summary}")
             else:
                 self._append(result.get('message', '压缩失败'))
         except Exception as e:
