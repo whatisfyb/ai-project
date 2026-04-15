@@ -3,8 +3,8 @@
 import re
 from typing import Optional, Literal
 
-from utils.chunk_model import Chunk, ChunkType
-from utils.chunk_config import StructureChunkConfig
+from utils.chunking.chunk_model import Chunk, ChunkType
+from utils.chunking.chunk_config import StructureChunkConfig
 
 
 # ============ 标题模式定义 ============

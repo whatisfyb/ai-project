@@ -425,7 +425,7 @@ class PlanExecutor:
         Returns:
             汇总结果
         """
-        from utils.llm import get_llm_model
+        from utils.core.llm import get_llm_model
 
         llm = get_llm_model()
 

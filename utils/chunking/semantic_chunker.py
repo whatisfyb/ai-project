@@ -4,9 +4,9 @@ import math
 import re
 from typing import Optional
 
-from utils.chunk_model import Chunk, ChunkType
-from utils.chunk_config import SemanticChunkConfig
-from utils.embedding import embed_texts
+from utils.chunking.chunk_model import Chunk, ChunkType
+from utils.chunking.chunk_config import SemanticChunkConfig
+from utils.core.embedding import embed_texts
 
 
 def cosine_sim(a: list[float], b: list[float]) -> float:

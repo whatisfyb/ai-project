@@ -10,10 +10,10 @@ from typing import Optional
 
 from langchain_core.documents import Document
 
-from utils.file_loader import FileLoader
-from utils.pdf_preprocessor import PDFPreprocessor
-from utils.structure_chunker import StructureChunker
-from utils.vector_store import VectorStore
+from utils.document.file_loader import FileLoader
+from utils.document.pdf_preprocessor import PDFPreprocessor
+from utils.chunking.structure_chunker import StructureChunker
+from utils.retrieval.vector_store import VectorStore
 
 
 @dataclass

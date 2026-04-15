@@ -2,12 +2,12 @@
 
 from typing import Optional
 
-from utils.chunk_config import SplitterPipelineConfig
-from utils.chunk_model import Chunk
-from utils.structure_chunker import StructureChunker
-from utils.semantic_chunker import SemanticChunker
-from utils.chunk_enricher import ChunkEnricher
-from utils.text_splitter import TextSplitter
+from utils.chunking.chunk_config import SplitterPipelineConfig
+from utils.chunking.chunk_model import Chunk
+from utils.chunking.structure_chunker import StructureChunker
+from utils.chunking.semantic_chunker import SemanticChunker
+from utils.chunking.chunk_enricher import ChunkEnricher
+from utils.chunking.text_splitter import TextSplitter
 
 
 class SplitterPipeline:

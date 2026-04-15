@@ -6,7 +6,7 @@
 from typing import Any
 
 # Import JSON-RPC types from common module
-from utils.jsonrpc import (
+from utils.protocol.jsonrpc import (
     JSONRPCRequest,
     JSONRPCResponse,
     JSONRPCErrorCodes,
@@ -56,7 +56,7 @@ def build_tasks_cancel_params(task_id: str) -> dict[str, Any]:
     return {"taskId": task_id}
 
 
-# ============ 响应构建 (re-export from utils.jsonrpc) ============
+# ============ 响应构建 (re-export from utils.protocol.jsonrpc) ============
 
 def make_error_response(
     request_id: str | int | None,

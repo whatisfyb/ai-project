@@ -2,7 +2,7 @@
 
 import os
 
-from utils.config import Settings
+from utils.core.config import Settings
 
 
 def configure_langsmith():

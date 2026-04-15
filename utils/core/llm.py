@@ -4,7 +4,7 @@ from typing import Optional
 
 from langchain_openai import ChatOpenAI
 
-from utils.config import Settings, SingleLLMConfig
+from utils.core.config import Settings, SingleLLMConfig
 
 
 _llm_instances: dict[str, ChatOpenAI] = {}

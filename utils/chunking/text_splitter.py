@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING, Optional
 
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from utils.config import Settings
+from utils.core.config import Settings
 
 if TYPE_CHECKING:
-    from utils.chunk_pipeline import SplitterPipeline
+    from utils.chunking.chunk_pipeline import SplitterPipeline
 
 
 class TextSplitter:

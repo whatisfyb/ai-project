@@ -11,7 +11,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 from langchain_core.tools import tool
 
-from utils.config import Settings
+from utils.core.config import Settings
 
 
 # ============ 客户端获取 ============

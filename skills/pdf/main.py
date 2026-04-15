@@ -2,9 +2,9 @@
 
 from typing import Any
 
-from utils.file_loader import FileLoader
-from utils.pdf_preprocessor import PDFPreprocessor
-from utils.paper_parser import PaperParser, PaperMeta
+from utils.document.file_loader import FileLoader
+from utils.document.pdf_preprocessor import PDFPreprocessor
+from utils.document.paper_parser import PaperParser, PaperMeta
 
 
 def run(
@@ -194,7 +194,7 @@ def _summarize(file_path: str) -> dict[str, Any]:
 
 def _generate_summary(text: str, doc_type: str = "文档") -> str:
     """使用 LLM 生成摘要"""
-    from utils.llm import get_llm_model
+    from utils.core.llm import get_llm_model
 
     llm = get_llm_model()
 

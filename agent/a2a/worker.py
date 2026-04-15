@@ -401,7 +401,7 @@ class A2AWorker:
             执行结果
         """
         from store.plan import PlanStore
-        from utils.llm import get_llm_model
+        from utils.core.llm import get_llm_model
 
         plan_id = plantask_info["plan_id"]
         task_id = plantask_info["task_id"]
@@ -503,7 +503,7 @@ class A2AWorker:
 
     def _execute_text_task(self, message: Message, a2a_task: Task) -> str:
         """执行普通文本任务（非 PlanTask）"""
-        from utils.llm import get_llm_model
+        from utils.core.llm import get_llm_model
 
         llm = get_llm_model()
         llm_with_tools = llm.bind_tools(self.tools)

@@ -6,10 +6,10 @@
 from typing import Any, Optional, Literal
 from langchain_core.tools import tool
 
-from utils.vector_store import VectorStore
-from utils.reranker import rerank_with_scores
-from utils.hybrid_search import HybridSearcher, rrf_fusion
-from utils.whoosh_index import get_whoosh_index
+from utils.retrieval.vector_store import VectorStore
+from utils.retrieval.reranker import rerank_with_scores
+from utils.retrieval.hybrid_search import HybridSearcher, rrf_fusion
+from utils.retrieval.whoosh_index import get_whoosh_index
 
 
 # 默认的 papers collection
@@ -110,7 +110,7 @@ def paper_search(
         # 查询扩展
         queries = [query]
         if expand_query:
-            from utils.query_rewriter import expand_query as do_expand
+            from utils.retrieval.query_rewriter import expand_query as do_expand
             queries = do_expand(query, n_expansions=2)
 
         # 构建元数据过滤条件
@@ -410,7 +410,7 @@ import hashlib
 from pathlib import Path
 
 from store.ingest_task import IngestTaskStore, IngestTask
-from utils.paper_parser import (
+from utils.document.paper_parser import (
     PaperParser, PaperMeta, validate_paper_format, validate_and_parse
 )
 

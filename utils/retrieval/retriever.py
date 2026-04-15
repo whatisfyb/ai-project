@@ -6,7 +6,7 @@ from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 
-from utils.vector_store import VectorStore
+from utils.retrieval.vector_store import VectorStore
 
 
 class Retriever(BaseRetriever):

@@ -10,7 +10,7 @@ from typing import Optional
 from agent.core.models import PlanTask
 from agent.core.signals import is_interrupted
 from store.plan import PlanStore
-from utils.llm import get_llm_model
+from utils.core.llm import get_llm_model
 
 
 def _get_worker_tools():

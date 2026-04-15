@@ -1,7 +1,7 @@
 """模型预加载模块"""
 
-from utils.embedding import preload_embedding_model
-from utils.reranker import preload_reranker_model
+from utils.core.embedding import preload_embedding_model
+from utils.retrieval.reranker import preload_reranker_model
 
 
 def preload_models(embedding: bool = True, reranker: bool = True) -> dict[str, bool]:
@@ -31,8 +31,8 @@ def preload_models(embedding: bool = True, reranker: bool = True) -> dict[str, b
 
 def is_models_loaded() -> dict[str, bool]:
     """检查模型是否已加载"""
-    from utils.embedding import _embedding_model
-    from utils.reranker import _reranker_model
+    from utils.core.embedding import _embedding_model
+    from utils.retrieval.reranker import _reranker_model
 
     return {
         "embedding": _embedding_model is not None,

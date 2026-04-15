@@ -2,9 +2,9 @@
 import asyncio
 
 from agent.core.models import MainAgentState
-from utils.token_counter import count_messages_tokens, count_tokens
-from utils.config import get_settings_instance
-from utils.compact import compact_messages
+from utils.context.token_counter import count_messages_tokens, count_tokens
+from utils.core.config import get_settings_instance
+from utils.context.compact import compact_messages
 
 
 # 模块级 checkpointer 注册
@@ -59,7 +59,7 @@ async def compact_session(thread_id: str, context_window: int) -> dict:
         压缩结果，包含摘要和 token 统计
     """
     from store.session import SessionStore
-    from utils.llm import get_llm_model
+    from utils.core.llm import get_llm_model
 
     session_store = SessionStore()
     messages = session_store.get_messages(thread_id)

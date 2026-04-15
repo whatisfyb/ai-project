@@ -7,8 +7,8 @@ from typing import Any
 from langchain_core.messages import HumanMessage, AIMessage, AIMessageChunk, SystemMessage
 from langgraph.graph import StateGraph, END, START
 
-from utils.llm import get_llm_model
-from utils.config import get_default_model_config, get_settings_instance
+from utils.core.llm import get_llm_model
+from utils.core.config import get_default_model_config, get_settings_instance
 from agent.core.models import MainAgentState
 from agent.core.signals import is_interrupted
 from agent.main.tools import get_main_agent_tools

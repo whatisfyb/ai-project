@@ -7,7 +7,7 @@ from typing_extensions import TypedDict
 from langgraph.graph import StateGraph, END, START
 from langgraph.checkpoint.memory import MemorySaver
 
-from utils.llm import get_llm_model
+from utils.core.llm import get_llm_model
 
 
 # 使用 dict 作为 bound，TypedDict 是 dict 的子类型

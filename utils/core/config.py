@@ -41,8 +41,8 @@ def _get_config_path() -> Path:
     """获取 config.yaml 路径"""
     config_file = Path("config.yaml")
     if not config_file.is_absolute():
-        # 相对于此文件的位置
-        config_dir = Path(__file__).parent.parent
+        # 相对于此文件的位置 (utils/core/ -> 项目根目录需要往上两级)
+        config_dir = Path(__file__).parent.parent.parent
         config_file = config_dir / config_file
     return config_file
 

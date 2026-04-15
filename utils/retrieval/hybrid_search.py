@@ -4,8 +4,8 @@ import asyncio
 from typing import Optional
 from langchain_core.documents import Document
 
-from utils.vector_store import VectorStore
-from utils.whoosh_index import WhooshIndex, get_whoosh_index
+from utils.retrieval.vector_store import VectorStore
+from utils.retrieval.whoosh_index import WhooshIndex, get_whoosh_index
 
 
 # RRF 融合参数

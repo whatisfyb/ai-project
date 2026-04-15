@@ -7,8 +7,8 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 
-from utils.llm import get_llm_model
-from utils.token_counter import count_messages_tokens
+from utils.core.llm import get_llm_model
+from utils.context.token_counter import count_messages_tokens
 
 
 # 压缩提示词

@@ -3,7 +3,7 @@
 from typing import Optional
 from sentence_transformers import SentenceTransformer
 
-from utils.config import Settings
+from utils.core.config import Settings
 
 
 _embedding_model: Optional[SentenceTransformer] = None

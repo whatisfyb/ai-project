@@ -3,8 +3,8 @@
 import re
 from typing import Optional
 
-from utils.chunk_config import EnrichmentConfig
-from utils.chunk_model import Chunk
+from utils.chunking.chunk_config import EnrichmentConfig
+from utils.chunking.chunk_model import Chunk
 
 # Sentences starting with these indicate dependency on prior context
 DEPENDENCY_MARKERS = re.compile(

@@ -6,10 +6,10 @@
 from typing import Any, Optional, Literal
 from langchain_core.tools import tool
 
-from utils.vector_store import VectorStore
-from utils.reranker import rerank_with_scores
-from utils.hybrid_search import HybridSearcher
-from utils.whoosh_index import get_whoosh_index
+from utils.retrieval.vector_store import VectorStore
+from utils.retrieval.reranker import rerank_with_scores
+from utils.retrieval.hybrid_search import HybridSearcher
+from utils.retrieval.whoosh_index import get_whoosh_index
 
 
 # 默认配置
@@ -278,7 +278,7 @@ def _action_ingest(pdf_paths: list[str] = None, **kwargs) -> dict[str, Any]:
     import time
     import hashlib
     from store.ingest_task import IngestTaskStore
-    from utils.paper_parser import PaperParser
+    from utils.document.paper_parser import PaperParser
 
     # 验证文件
     valid_paths = [p for p in pdf_paths if Path(p).exists() and p.lower().endswith(".pdf")]

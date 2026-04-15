@@ -135,7 +135,7 @@ KEYWORDS: 关键词1, 关键词2
         query = state["query"]
 
         try:
-            from utils.retriever import Retriever
+            from utils.retrieval.retriever import Retriever
 
             retriever = Retriever()
             docs = retriever.retrieve(query, top_k=5)

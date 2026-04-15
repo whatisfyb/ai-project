@@ -7,7 +7,7 @@ import chromadb
 from chromadb.config import Settings as ChromaSettings
 from langchain_core.documents import Document
 
-from utils.embedding import embed_texts, get_embedding_dimension
+from utils.core.embedding import embed_texts, get_embedding_dimension
 
 
 class VectorStore:

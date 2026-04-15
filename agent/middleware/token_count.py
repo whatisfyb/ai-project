@@ -1,6 +1,6 @@
 """Token 计量相关节点"""
 from agent.core.models import MainAgentState
-from utils.token_counter import count_messages_tokens, count_tokens
+from utils.context.token_counter import count_messages_tokens, count_tokens
 
 
 def recalculate_session_tokens(thread_id: str) -> int:

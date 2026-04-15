@@ -207,7 +207,7 @@ class MainAgentTUI(App):
         title = (session.get("title", self.thread_id) if session else self.thread_id)[:15]
         tokens = session.get("total_tokens", 0) if session else 0
 
-        from utils.config import get_default_model_config, check_context_status
+        from utils.core.config import get_default_model_config, check_context_status
         model_config = get_default_model_config()
         context_status = check_context_status(tokens, model_config)
 

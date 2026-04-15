@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 # Import JSON-RPC types from common module
-from utils.jsonrpc import JSONRPCRequest, JSONRPCResponse
+from utils.protocol.jsonrpc import JSONRPCRequest, JSONRPCResponse
 
 
 # ============ MCP Capabilities ============

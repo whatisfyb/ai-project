@@ -35,7 +35,7 @@ class MCPManager:
 
     def initialize(self) -> None:
         """Initialize from config - connect to all enabled servers"""
-        from utils.config import get_settings_instance
+        from utils.core.config import get_settings_instance
 
         settings = get_settings_instance()
 
