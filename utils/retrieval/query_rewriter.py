@@ -7,7 +7,7 @@ from langchain_core.language_models import BaseChatModel
 
 def get_default_llm() -> BaseChatModel:
     """获取默认 LLM"""
-    from utils.llm import get_llm_model
+    from utils.core.llm import get_llm_model
     return get_llm_model()
 
 

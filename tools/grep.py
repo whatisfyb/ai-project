@@ -85,8 +85,9 @@ SUPPORTED_EXTENSIONS = {
     "gradle": "Gradle",
     "tf": "Terraform",
     "tfvars": "Terraform",
-    "v": "Verilog",
+    "v": "V",
     "vhd": "VHDL",
+    "verilog": "Verilog",
     "asm": "Assembly",
     "s": "Assembly",
     "rkt": "Racket",
@@ -94,7 +95,6 @@ SUPPORTED_EXTENSIONS = {
     "jl": "Julia",
     "nim": "Nim",
     "zig": "Zig",
-    "v": "V",
     "mod": "Module (Nim)",
 }
 

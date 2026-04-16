@@ -133,9 +133,9 @@ def paper_kb(
         elif action == "ingest_cancel":
             return _action_ingest_cancel(task_id=task_id)
         else:
-            return {"status": "error", "error": f"Unknown action: {action}"}
+            return {"success": False, "error": f"Unknown action: {action}"}
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        return {"success": False, "error": str(e)}
 
 
 def _action_search(
@@ -152,7 +152,7 @@ def _action_search(
 ) -> dict[str, Any]:
     """搜索论文"""
     if not query:
-        return {"status": "error", "error": "query is required for search action"}
+        return {"success": False, "error": "query is required for search action"}
 
     # 构建过滤条件
     filter_dict = None
@@ -186,7 +186,7 @@ def _action_search(
         results = rerank_with_scores(query, documents, top_k=top_k)
 
     return {
-        "status": "success",
+        "success": True,
         "query": query,
         "total_results": len(results),
         "results": [_format_doc(doc, score) for doc, score in results],
@@ -238,7 +238,7 @@ def _action_list(
     if year_max is not None:
         paper_list = [p for p in paper_list if p.get("year") and p["year"] <= year_max]
 
-    return {"status": "success", "total_papers": len(paper_list[:limit]), "papers": paper_list[:limit]}
+    return {"success": True, "total_papers": len(paper_list[:limit]), "papers": paper_list[:limit]}
 
 
 def _action_stats(**kwargs) -> dict[str, Any]:
@@ -260,7 +260,7 @@ def _action_stats(**kwargs) -> dict[str, Any]:
             years[meta["year"]] = years.get(meta["year"], 0) + 1
 
     return {
-        "status": "success",
+        "success": True,
         "total_papers": len(paper_ids),
         "total_chunks": total_chunks,
         "sections_count": sections,
@@ -271,7 +271,7 @@ def _action_stats(**kwargs) -> dict[str, Any]:
 def _action_ingest(pdf_paths: list[str] = None, **kwargs) -> dict[str, Any]:
     """入库论文"""
     if not pdf_paths:
-        return {"status": "error", "error": "pdf_paths is required"}
+        return {"success": False, "error": "pdf_paths is required"}
 
     from pathlib import Path
     import threading
@@ -283,7 +283,7 @@ def _action_ingest(pdf_paths: list[str] = None, **kwargs) -> dict[str, Any]:
     # 验证文件
     valid_paths = [p for p in pdf_paths if Path(p).exists() and p.lower().endswith(".pdf")]
     if not valid_paths:
-        return {"status": "error", "error": "No valid PDF files"}
+        return {"success": False, "error": "No valid PDF files"}
 
     # 创建任务
     task_id = f"ingest_{int(time.time())}_{hashlib.md5('|'.join(sorted(valid_paths)).encode()).hexdigest()[:8]}"
@@ -333,7 +333,7 @@ def _action_ingest(pdf_paths: list[str] = None, **kwargs) -> dict[str, Any]:
     thread.start()
 
     return {
-        "status": "started",
+        "success": True,
         "task_id": task_id,
         "total_papers": len(valid_paths),
         "message": f"Ingestion started. Use paper_kb(action='ingest_status', task_id='{task_id}') to check progress.",
@@ -343,19 +343,19 @@ def _action_ingest(pdf_paths: list[str] = None, **kwargs) -> dict[str, Any]:
 def _action_ingest_status(task_id: str = None, **kwargs) -> dict[str, Any]:
     """查询入库状态"""
     if not task_id:
-        return {"status": "error", "error": "task_id is required"}
+        return {"success": False, "error": "task_id is required"}
 
     from store.ingest_task import IngestTaskStore
     ingest_store = IngestTaskStore()
     task = ingest_store.get_task(task_id)
 
     if not task:
-        return {"status": "error", "error": f"Task not found: {task_id}"}
+        return {"success": False, "error": f"Task not found: {task_id}"}
 
     progress = round(task.processed_papers / task.total_papers * 100, 1) if task.total_papers > 0 else 0
 
     return {
-        "status": "success",
+        "success": True,
         "task_id": task.task_id,
         "task_status": task.status,
         "progress": f"{progress}%",
@@ -371,23 +371,23 @@ def _action_ingest_status(task_id: str = None, **kwargs) -> dict[str, Any]:
 def _action_ingest_cancel(task_id: str = None, **kwargs) -> dict[str, Any]:
     """取消入库任务"""
     if not task_id:
-        return {"status": "error", "error": "task_id is required"}
+        return {"success": False, "error": "task_id is required"}
 
     from store.ingest_task import IngestTaskStore
     ingest_store = IngestTaskStore()
     task = ingest_store.get_task(task_id)
 
     if not task:
-        return {"status": "error", "error": f"Task not found: {task_id}"}
+        return {"success": False, "error": f"Task not found: {task_id}"}
 
     if task.status not in ("pending", "running"):
-        return {"status": "error", "error": f"Task is {task.status}, cannot cancel"}
+        return {"success": False, "error": f"Task is {task.status}, cannot cancel"}
 
     task.status = "interrupted"
     ingest_store.update_task(task)
 
     return {
-        "status": "success",
+        "success": True,
         "task_id": task_id,
         "message": "Task cancelled",
         "processed_papers": task.processed_papers,

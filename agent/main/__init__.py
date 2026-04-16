@@ -5,5 +5,4 @@ from agent.main.agent import MainAgent, create_main_agent
 __all__ = [
     "MainAgent",
     "create_main_agent",
-    "run_repl",
 ]

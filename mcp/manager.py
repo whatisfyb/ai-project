@@ -156,13 +156,6 @@ class MCPManager:
         return {"success": False, "content": "No result", "is_error": True}
 
 
-# Global singleton
-_mcp_manager: MCPManager | None = None
-
-
 def get_mcp_manager() -> MCPManager:
     """Get MCP manager singleton"""
-    global _mcp_manager
-    if _mcp_manager is None:
-        _mcp_manager = MCPManager()
-    return _mcp_manager
+    return MCPManager()

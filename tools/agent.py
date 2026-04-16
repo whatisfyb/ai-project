@@ -29,7 +29,7 @@ def _run_subagent(subagent_type: str, prompt: str) -> dict[str, Any]:
     subagent_classes = _get_subagent_classes()
 
     if subagent_type not in subagent_classes:
-        return {"status": "error", "error": f"Unknown subagent: {subagent_type}"}
+        return {"success": False, "error": f"Unknown subagent: {subagent_type}"}
 
     thread_id = _get_current_thread_id()
     agent = subagent_classes[subagent_type]()
@@ -83,23 +83,23 @@ def agent(
         elif action == "list":
             return _list_subagents()
         else:
-            return {"status": "error", "error": f"Unknown action: {action}"}
+            return {"success": False, "error": f"Unknown action: {action}"}
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        return {"success": False, "error": str(e)}
 
 
 def _dispatch(subagent_type: str, prompt: str) -> dict[str, Any]:
     """分发任务"""
     if not subagent_type:
-        return {"status": "error", "error": "subagent_type is required"}
+        return {"success": False, "error": "subagent_type is required"}
     if not prompt:
-        return {"status": "error", "error": "prompt is required"}
+        return {"success": False, "error": "prompt is required"}
 
     result = _run_subagent(subagent_type, prompt)
     summary = _generate_summary(subagent_type, result)
 
     return {
-        "status": "completed",
+        "success": True,
         "subagent_type": subagent_type,
         "result": result,
         "summary": summary,
@@ -109,5 +109,6 @@ def _dispatch(subagent_type: str, prompt: str) -> dict[str, Any]:
 def _list_subagents() -> dict[str, Any]:
     """列出子代理"""
     return {
+        "success": True,
         "subagents": [{"type": k, "description": v} for k, v in _SUBAGENT_DESCRIPTIONS.items()]
     }

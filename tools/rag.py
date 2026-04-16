@@ -202,7 +202,7 @@ def paper_search(
             })
 
         return {
-            "status": "success",
+            "success": True,
             "query": query,
             "total_results": len(formatted_results),
             "results": formatted_results,
@@ -210,7 +210,7 @@ def paper_search(
 
     except Exception as e:
         return {
-            "status": "error",
+            "success": False,
             "error": str(e),
             "results": [],
         }
@@ -313,14 +313,14 @@ def paper_list(
         paper_list = paper_list[:limit]
 
         return {
-            "status": "success",
+            "success": True,
             "total_papers": len(paper_list),
             "papers": paper_list,
         }
 
     except Exception as e:
         return {
-            "status": "error",
+            "success": False,
             "error": str(e),
             "papers": [],
         }
@@ -358,7 +358,7 @@ def paper_stats() -> dict[str, Any]:
                 years[year] = years.get(year, 0) + 1
 
         return {
-            "status": "success",
+            "success": True,
             "total_papers": len(paper_ids),
             "total_chunks": total_chunks,
             "sections_count": sections,
@@ -367,7 +367,7 @@ def paper_stats() -> dict[str, Any]:
 
     except Exception as e:
         return {
-            "status": "error",
+            "success": False,
             "error": str(e),
         }
 
@@ -390,14 +390,14 @@ def paper_build_index() -> dict[str, Any]:
         doc_count = whoosh_index.count()
 
         return {
-            "status": "success",
+            "success": True,
             "message": f"全文索引构建完成，共 {doc_count} 篇文档",
             "document_count": doc_count,
         }
 
     except Exception as e:
         return {
-            "status": "error",
+            "success": False,
             "error": str(e),
         }
 
@@ -571,7 +571,7 @@ def paper_ingest(
     """
     if not pdf_paths:
         return {
-            "status": "error",
+            "success": False,
             "error": "PDF 路径列表不能为空",
         }
 
@@ -587,7 +587,7 @@ def paper_ingest(
 
     if not valid_paths:
         return {
-            "status": "error",
+            "success": False,
             "error": "没有有效的 PDF 文件",
             "invalid_paths": invalid_paths,
         }
@@ -633,7 +633,7 @@ def paper_ingest_status(task_id: str) -> dict[str, Any]:
 
     if not task:
         return {
-            "status": "error",
+            "success": False,
             "error": f"任务不存在: {task_id}",
         }
 
@@ -643,7 +643,7 @@ def paper_ingest_status(task_id: str) -> dict[str, Any]:
         progress = round(task.processed_papers / task.total_papers * 100, 1)
 
     return {
-        "status": "success",
+        "success": True,
         "task_id": task.task_id,
         "task_status": task.status,
         "progress": f"{progress}%",
@@ -676,7 +676,7 @@ def paper_ingest_list(
     tasks = ingest_store.list_tasks(status=status, limit=limit)
 
     return {
-        "status": "success",
+        "success": True,
         "total_tasks": len(tasks),
         "tasks": [
             {
@@ -709,13 +709,13 @@ def paper_ingest_cancel(task_id: str) -> dict[str, Any]:
 
     if not task:
         return {
-            "status": "error",
+            "success": False,
             "error": f"任务不存在: {task_id}",
         }
 
     if task.status not in ("pending", "running"):
         return {
-            "status": "error",
+            "success": False,
             "error": f"任务状态为 {task.status}，无法取消",
         }
 
@@ -723,7 +723,7 @@ def paper_ingest_cancel(task_id: str) -> dict[str, Any]:
     ingest_store.update_task(task)
 
     return {
-        "status": "success",
+        "success": True,
         "task_id": task_id,
         "message": "任务已标记为中断",
         "processed_papers": task.processed_papers,

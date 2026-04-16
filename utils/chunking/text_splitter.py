@@ -93,12 +93,12 @@ def create_pipeline_splitter(
     Returns:
         SplitterPipeline instance.
     """
-    from utils.chunk_config import (
+    from utils.chunking.chunk_config import (
         SemanticChunkConfig,
         SplitterPipelineConfig,
         StructureChunkConfig,
     )
-    from utils.chunk_pipeline import SplitterPipeline
+    from utils.chunking.chunk_pipeline import SplitterPipeline
 
     config = SplitterPipelineConfig(
         structure=StructureChunkConfig(soft_max_chars=chunk_size * 3),

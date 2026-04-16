@@ -76,13 +76,13 @@ def plan_dispatch(plan_id: str, num_workers: int = 2) -> dict[str, Any]:
     plan = store.load_plan(plan_id)
     if not plan:
         return {
-            "status": "error",
+            "success": False,
             "error": f"Plan not found: {plan_id}",
         }
 
     if not plan.tasks:
         return {
-            "status": "error",
+            "success": False,
             "error": "Plan has no tasks to execute",
         }
 
@@ -102,7 +102,7 @@ def plan_dispatch(plan_id: str, num_workers: int = 2) -> dict[str, Any]:
 
     if current_thread_id and plan_thread_id and current_thread_id != plan_thread_id:
         return {
-            "status": "error",
+            "success": False,
             "error": f"Plan {plan_id} 属于会话 {plan_thread_id}，当前会话是 {current_thread_id}。",
         }
 
@@ -110,7 +110,7 @@ def plan_dispatch(plan_id: str, num_workers: int = 2) -> dict[str, Any]:
     pending_tasks = store.get_pending_tasks(plan_id)
     if not pending_tasks:
         return {
-            "status": "error",
+            "success": False,
             "error": "No executable tasks (all may have unsatisfied dependencies)",
         }
 
@@ -121,7 +121,7 @@ def plan_dispatch(plan_id: str, num_workers: int = 2) -> dict[str, Any]:
     workers = transport.find_agents_by_skill("execute_plantask")
     if not workers:
         return {
-            "status": "error",
+            "success": False,
             "error": "No workers available. Workers may not have started.",
         }
 
@@ -160,7 +160,7 @@ def plan_dispatch(plan_id: str, num_workers: int = 2) -> dict[str, Any]:
         })
 
     return {
-        "status": "dispatched",
+        "success": True,
         "plan_id": plan_id,
         "goal": plan.goal,
         "dispatched_count": len(dispatched_jobs),
@@ -186,7 +186,7 @@ def job_status(job_id: str) -> dict[str, Any]:
     task = transport.tasks_get(job_id)
     if not task:
         return {
-            "status": "error",
+            "success": False,
             "error": f"Job not found: {job_id}",
         }
 
@@ -200,6 +200,7 @@ def job_status(job_id: str) -> dict[str, Any]:
         }
 
     return {
+        "success": True,
         "job_id": task.id,
         "status": task.status.value,
         "plan_id": task.plan_id,
@@ -244,6 +245,7 @@ def job_list(plan_id: str | None = None) -> dict[str, Any]:
         })
 
     return {
+        "success": True,
         "count": len(jobs_info),
         "jobs": jobs_info,
     }
@@ -271,7 +273,7 @@ def job_wait(job_id: str, timeout: int = 60) -> dict[str, Any]:
     task = transport.tasks_get(job_id)
     if not task:
         return {
-            "status": "error",
+            "success": False,
             "error": f"Job not found: {job_id}",
         }
 
@@ -304,6 +306,7 @@ def job_wait(job_id: str, timeout: int = 60) -> dict[str, Any]:
     # 直接返回状态
     final = final_task["task"]
     return {
+        "success": True,
         "job_id": final.id,
         "status": final.status.value,
         "plan_id": final.plan_id,
@@ -340,6 +343,7 @@ def worker_list() -> dict[str, Any]:
         })
 
     return {
+        "success": True,
         "count": len(workers_info),
         "workers": workers_info,
     }
