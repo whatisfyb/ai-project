@@ -33,6 +33,4 @@ class MainAgentState(TypedDict):
     messages: list[dict]  # 消息历史
     current_task: str | None  # 当前任务
     memory_context: str | None  # 记忆上下文
-    subagent_results: dict[str, Any]  # 子代理结果
     thread_id: str  # 会话 ID
-    session_id: str  # 存储会话 ID

@@ -278,7 +278,7 @@ async def check_token_node(state: MainAgentState, context_window: int) -> dict:
     放在 finish_section 的最后一个节点，token_count_node 之后执行。
 
     Args:
-        state: MainAgentState 状态（含 thread_id, session_id）
+        state: MainAgentState 状态（含 thread_id）
         context_window: 模型上下文窗口大小
 
     Returns:
@@ -287,12 +287,11 @@ async def check_token_node(state: MainAgentState, context_window: int) -> dict:
     from store.session import SessionStore
 
     thread_id = state.get("thread_id")
-    session_id = state.get("session_id")
     if not thread_id:
         return {}
 
     session_store = SessionStore()
-    session = session_store.get_session(session_id or thread_id)
+    session = session_store.get_session(thread_id)
     if not session:
         return {}
 
@@ -302,7 +301,7 @@ async def check_token_node(state: MainAgentState, context_window: int) -> dict:
         return {}
 
     # 执行压缩
-    result = await compact_session(session_id or thread_id, context_window)
+    result = await compact_session(thread_id, context_window)
 
     if result.get("success"):
         # 将 dict 格式转换为 LangChain Message 对象

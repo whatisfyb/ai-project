@@ -38,7 +38,7 @@ async def token_count_node(state: MainAgentState) -> dict:
     放在 finish_section 的最后一个节点，在 graph 执行完后统计。
 
     Args:
-        state: MainAgentState 状态（含 thread_id, session_id）
+        state: MainAgentState 状态（含 thread_id）
 
     Returns:
         空字典（不更新状态，仅副作用）
@@ -46,7 +46,6 @@ async def token_count_node(state: MainAgentState) -> dict:
     from store.session import SessionStore
 
     thread_id = state.get("thread_id")
-    session_id = state.get("session_id")
     if not thread_id:
         return {}
 
@@ -70,6 +69,6 @@ async def token_count_node(state: MainAgentState) -> dict:
     total_tokens = system_tokens + messages_tokens
 
     # 存入 session_store
-    session_store.update_session_tokens(session_id or thread_id, total_tokens)
+    session_store.update_session_tokens(thread_id, total_tokens)
 
     return {}

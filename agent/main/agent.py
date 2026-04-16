@@ -319,9 +319,7 @@ class MainAgent:
             "messages": existing_messages + [HumanMessage(content=message)],
             "current_task": None,
             "memory_context": None,
-            "subagent_results": {},
             "thread_id": thread_id,
-            "session_id": thread_id,
         }
 
         accumulated_response = ""
