@@ -1,4 +1,5 @@
 """上下文压缩相关节点"""
+
 import asyncio
 import threading
 from datetime import datetime
@@ -21,6 +22,7 @@ def set_checkpointer(checkpointer) -> None:
 
 
 # ============ 断路器状态 ============
+
 
 class CircuitBreakerState:
     """断路器状态（线程安全）"""
@@ -50,7 +52,9 @@ class CircuitBreakerState:
 
             # 检查是否触发断路器
             if len(self._recent_savings) >= self.consecutive_threshold:
-                recent = [s[0] for s in self._recent_savings[-self.consecutive_threshold:]]
+                recent = [
+                    s[0] for s in self._recent_savings[-self.consecutive_threshold :]
+                ]
                 if all(s < self.min_savings_pct for s in recent):
                     self._triggered = True
                     self._triggered_at = datetime.now()
@@ -86,9 +90,13 @@ class CircuitBreakerState:
         with self._lock:
             return {
                 "triggered": self._triggered,
-                "triggered_at": self._triggered_at.isoformat() if self._triggered_at else None,
+                "triggered_at": self._triggered_at.isoformat()
+                if self._triggered_at
+                else None,
                 "recent_savings": [s[0] for s in self._recent_savings],
-                "consecutive_count": len([s for s in self._recent_savings if s[0] < self.min_savings_pct]),
+                "consecutive_count": len(
+                    [s for s in self._recent_savings if s[0] < self.min_savings_pct]
+                ),
             }
 
 
@@ -233,7 +241,9 @@ async def compact_session(thread_id: str, context_window: int) -> dict:
     # 计算压缩节省比例并记录到断路器
     tokens_before = result["tokens_before"]
     tokens_after = result["tokens_after"]
-    savings_pct = (tokens_before - tokens_after) / tokens_before if tokens_before > 0 else 0
+    savings_pct = (
+        (tokens_before - tokens_after) / tokens_before if tokens_before > 0 else 0
+    )
 
     if compact_settings.circuit_breaker_enabled:
         circuit_breaker = get_circuit_breaker()
@@ -318,18 +328,22 @@ async def check_token_node(state: MainAgentState, context_window: int) -> dict:
             elif role == "assistant":
                 tool_calls = metadata.get("tool_calls")
                 if tool_calls:
-                    compacted_messages.append(AIMessage(content=content, tool_calls=tool_calls))
+                    compacted_messages.append(
+                        AIMessage(content=content, tool_calls=tool_calls)
+                    )
                 else:
                     compacted_messages.append(AIMessage(content=content))
             elif role == "tool":
                 tool_call_id = metadata.get("tool_call_id")
                 tool_name = metadata.get("name")
                 if tool_call_id:
-                    compacted_messages.append(ToolMessage(
-                        content=content,
-                        tool_call_id=tool_call_id,
-                        name=tool_name,
-                    ))
+                    compacted_messages.append(
+                        ToolMessage(
+                            content=content,
+                            tool_call_id=tool_call_id,
+                            name=tool_name,
+                        )
+                    )
 
         return {"messages": compacted_messages}
 

@@ -1,4 +1,5 @@
 """长期记忆相关节点"""
+
 import asyncio
 from typing import Any
 
@@ -21,13 +22,22 @@ MEMORY_KEYWORDS = {
     # 项目信息
     "project": ["截止", "deadline", "计划", "安排", "进度", "发布", "上线"],
     # 外部引用
-    "reference": ["看板", "dashboard", "文档在", "链接是", "地址是", "追踪在", "记录在"],
+    "reference": [
+        "看板",
+        "dashboard",
+        "文档在",
+        "链接是",
+        "地址是",
+        "追踪在",
+        "记录在",
+    ],
     # 记忆删除
     "forget": ["忘了", "忘记", "删除记忆", "不需要记住", "不用记"],
 }
 
 
 # ============ 关键词检测 ============
+
 
 def detect_memory_keywords(text: str) -> tuple[bool, str | None, list[str]]:
     """检测文本中是否包含记忆相关关键词
@@ -53,6 +63,7 @@ def detect_memory_keywords(text: str) -> tuple[bool, str | None, list[str]]:
 
 
 # ============ 检查节点 ============
+
 
 async def check_memory_generation_node_async(state: MainAgentState) -> dict[str, Any]:
     """记忆生成检查节点（异步版本）
@@ -121,6 +132,7 @@ async def check_memory_generation_node_async(state: MainAgentState) -> dict[str,
 
 # ============ 辅助函数 ============
 
+
 def _extract_user_input(messages: list) -> str:
     """从消息列表中提取最后一条用户输入
 
@@ -139,6 +151,7 @@ def _extract_user_input(messages: list) -> str:
 
 
 # ============ 节点定义 ============
+
 
 async def load_memory_node(state: MainAgentState) -> dict:
     """加载记忆节点 - 从长期记忆中加载相关记忆到上下文"""
@@ -178,13 +191,44 @@ async def load_memory_node(state: MainAgentState) -> dict:
 
 
 async def memory_check_node(state: MainAgentState) -> dict:
-    """记忆检查节点 - 检查用户输入是否需要保存记忆（不阻塞主线程）"""
-    # fire-and-forget，不等待结果
-    asyncio.create_task(check_memory_generation_node_async(state))
+    """记忆检查节点 - 检查最后一条 HumanMessage 是否需要保存记忆
+
+    命中关键字才触发 LLM 分析（fire-and-forget）。
+    """
+    messages = state.get("messages", [])
+
+    # 只检测最后一条 HumanMessage（本轮用户输入）
+    user_input = _extract_user_input(messages)
+
+    if not user_input:
+        return {}
+
+    # 检测关键词
+    has_keywords, category, keywords = detect_memory_keywords(user_input)
+
+    if not has_keywords:
+        return {}
+
+    # 命中关键词，异步启动记忆分析（fire-and-forget）
+    try:
+        asyncio.create_task(_run_memory_analysis(user_input))
+    except Exception:
+        pass
+
     return {}
 
 
+async def _run_memory_analysis(user_input: str):
+    """异步运行记忆分析（fire-and-forget）"""
+    try:
+        agent = get_memory_agent()
+        await agent.run_async(user_input)
+    except Exception:
+        pass
+
+
 # ============ 便捷函数 ============
+
 
 def run_memory_check(user_input: str) -> dict[str, Any]:
     """运行记忆检查（便捷函数）

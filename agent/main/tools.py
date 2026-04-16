@@ -7,23 +7,25 @@ def get_main_agent_tools() -> list:
     """获取 Main Agent 可用的工具列表
 
     合并后的工具：
-    - web: Web 搜索、抓取、arXiv（原 8 个）
-    - agent: 子代理分发（原 2 个）
-    - paper_kb: 论文知识库（原 7 个）
-    - task: 任务管理（原 4 个）
+    - web: Web 搜索、抓取、arXiv
+    - agent: 子代理分发
+    - agent_dispatch: 异步分发（通过 Registry Inbox）
+    - agent_list/agent_status: Agent 状态查询
+    - paper_kb: 论文知识库
+    - task: 任务管理
     """
     # 合并后的核心工具
     from tools.web import web
-    from tools.agent import agent
+    from tools.agent import agent, agent_dispatch, agent_list, agent_status
     from tools.paper_kb import paper_kb
     from tools.task import task
 
     # A2A 工具
-    from agent.a2a.tools import (
-        plan_dispatch, job_status, job_list, job_wait, worker_list,
-    )
+    from agent.a2a.tools import plan_dispatch, worker_list
+
     # Skills 工具
     from tools.skills import load_skills, list_skills, skill_call
+
     # 文件操作工具
     from tools.grep import grep, grep_count
     from tools.read import read
@@ -39,21 +41,18 @@ def get_main_agent_tools() -> list:
         # === 核心工具（合并后）===
         web,
         agent,
+        agent_dispatch,
+        agent_list,
+        agent_status,
         paper_kb,
         task,
-
         # === A2A Worker ===
         plan_dispatch,
-        job_status,
-        job_list,
-        job_wait,
         worker_list,
-
         # === Skills ===
         load_skills,
         list_skills,
         skill_call,
-
         # === 文件操作 ===
         grep,
         grep_count,
@@ -66,7 +65,6 @@ def get_main_agent_tools() -> list:
         bash_script,
         glob,
         glob_list,
-
         # === MCP 工具 ===
         *mcp_tools,
     ]

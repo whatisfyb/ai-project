@@ -206,98 +206,67 @@ def agent_dispatch(
     wait: bool = True,
     timeout: int = 60,
 ) -> dict[str, Any]:
-    """Dispatch a task to an agent.
+    """Dispatch a task to a sub-agent via Registry dispatcher.
+
+    The task is delivered through centralized routing. The dispatcher
+    selects the best available instance (idle first, then round-robin),
+    or dynamically creates a new instance if none exists.
 
     Args:
-        agent_type: Type of agent (Plan, Research, Analysis)
+        agent_type: Type of agent (plan, research, analysis)
         prompt: Task prompt
-        wait: Whether to wait for completion (default: True)
-        timeout: Timeout in seconds when waiting (default: 60)
+        wait: Unused (kept for compatibility). Always async.
+        timeout: Unused (kept for compatibility).
 
     Returns:
-        Dispatch result
+        Dispatch confirmation with task_id and target instance.
     """
     import time
-    import threading
     from agent.core.registry import get_registry
     from agent.a2a.models import Task, Message
 
     registry = get_registry()
 
-    # 查找 Agent
-    agent_map = {
-        "Plan": "plan-agent",
-        "Research": "research-agent",
-        "Analysis": "analysis-agent",
+    # 映射类型名到 group_type
+    type_map = {
+        "Plan": "plan",
+        "Research": "research",
+        "Analysis": "analysis",
+        "plan": "plan",
+        "research": "research",
+        "analysis": "analysis",
     }
 
-    agent_id = agent_map.get(agent_type)
-    if not agent_id:
+    group_type = type_map.get(agent_type)
+    if not group_type:
         return {"success": False, "error": f"Unknown agent type: {agent_type}"}
 
-    state = registry.get_state(agent_id)
-    if state is None:
-        return {"success": False, "error": f"Agent not registered: {agent_type}"}
+    thread_id = _get_current_thread_id()
+    task_id = f"task-{group_type}-{int(time.time())}"
 
-    # 如果 Agent 处于 pending 状态，通过 Registry 激活（懒加载）
-    from agent.core.registry import AgentLifecycleState
+    # 构建 A2A Task
+    task = Task(
+        id=task_id,
+        sender_id="main",
+        receiver_id=group_type,  # 路由目标是类型，非具体实例
+        history=[Message.user_text(prompt)],
+        metadata={"thread_id": thread_id},
+    )
 
-    if state == AgentLifecycleState.PENDING:
-        # 通过 send_message 激活 Agent
-        task = Task(
-            id=f"task-{agent_type.lower()}-{int(time.time())}",
-            sender_id="main",
-            receiver_id=agent_id,
-            history=[Message.user_text(prompt)],
-            metadata={"thread_id": _get_current_thread_id()},
-        )
-        sent = registry.send_message(agent_id, task)
-        if not sent:
-            return {
-                "success": False,
-                "error": f"Failed to activate agent: {agent_type}",
-            }
-
-    # 运行子代理（直接调用，因为 subagents 目前是同步执行的）
-    def run_subagent():
-        subagent_classes = _get_subagent_classes()
-        if agent_type not in subagent_classes:
-            return {"success": False, "error": f"Unknown subagent: {agent_type}"}
-
-        thread_id = _get_current_thread_id()
-        agent = subagent_classes[agent_type]()
-
-        if agent_type == "Research":
-            result = agent.run(query=prompt, thread_id=thread_id)
-        else:
-            result = agent.run(task=prompt, thread_id=thread_id)
-
-        if isinstance(result, tuple):
-            plan, plan_id = result
-            return {
-                "success": True,
-                "plan": plan.model_dump() if hasattr(plan, "model_dump") else plan,
-                "plan_id": plan_id,
-            }
-        return {"success": True, "result": result}
-
-    if not wait:
-        # 异步执行
-        result_holder = {"result": None, "done": False}
-
-        def run_async():
-            result_holder["result"] = run_subagent()
-            result_holder["done"] = True
-
-        thread = threading.Thread(target=run_async, daemon=True)
-        thread.start()
-
+    # 通过 Dispatcher 路由（自动选实例/动态创建）
+    target_id = registry.dispatch(group_type, task, sender_id="main")
+    if not target_id:
         return {
-            "success": True,
-            "agent_type": agent_type,
-            "status": "dispatched",
-            "message": f"Task dispatched to {agent_type}. Check status later.",
+            "success": False,
+            "error": f"No available {group_type} instance (max instances reached)",
         }
 
-    # 同步等待
-    return run_subagent()
+    return {
+        "success": True,
+        "agent_type": agent_type,
+        "group_type": group_type,
+        "task_id": task_id,
+        "target_instance": target_id,
+        "status": "dispatched",
+        "message": f"Task dispatched to {group_type} instance '{target_id}'. Result will be delivered via inbox notification.",
+    }

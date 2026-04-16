@@ -381,6 +381,12 @@ class MainAgentTUI(App):
             if new_thread_id:
                 self.thread_id = new_thread_id
                 self._command_handler.update_thread_id(new_thread_id)
+                # 重新加载目标会话的历史消息
+                history = self.session_store.get_messages(new_thread_id)
+                if history:
+                    self.agent._current_state["messages"] = self.agent._restore_messages(history)
+                else:
+                    self.agent._current_state["messages"] = []
                 self._update_status()
 
         except Exception as e:

@@ -139,52 +139,61 @@ class MainAgent(BaseAgent):
         return start_graph
 
     def _build_reason_section(self) -> StateGraph:
-        """构建 reason_section 子图 - LLM 推理"""
+        """构建 reason_section 子图
+
+        reason → ┬→ memory_check → END
+                  └→ token_count → check_token → sync_state → END
+        """
         from langgraph.graph import StateGraph as SubStateGraph
 
         graph = SubStateGraph(MainAgentState)
         graph.add_node("reason", self._reason_node)
+        graph.add_node("memory_check", memory_check_node)
+        graph.add_node("token_count", token_count_node)
+        graph.add_node("check_token", self._check_token_node_wrapper)
+        graph.add_node("sync_state", self._sync_state_node)
+
         graph.add_edge(START, "reason")
-        graph.add_edge("reason", END)
+        graph.add_edge("reason", "memory_check")
+        graph.add_edge("reason", "token_count")
+        graph.add_edge("token_count", "check_token")
+        graph.add_edge("check_token", "sync_state")
+        graph.add_edge("memory_check", END)
+        graph.add_edge("sync_state", END)
+
         return graph
 
     def _build_tools_section(self) -> StateGraph:
-        """构建 tools_section 子图 - 工具执行"""
+        """构建 tools_section 子图
+
+        tools → token_count → check_token → sync_state → END
+        """
         from langgraph.graph import StateGraph as SubStateGraph
 
         graph = SubStateGraph(MainAgentState)
         graph.add_node("tools", self._tools_node)
+        graph.add_node("token_count", token_count_node)
+        graph.add_node("check_token", self._check_token_node_wrapper)
+        graph.add_node("sync_state", self._sync_state_node)
+
         graph.add_edge(START, "tools")
-        graph.add_edge("tools", END)
+        graph.add_edge("tools", "token_count")
+        graph.add_edge("token_count", "check_token")
+        graph.add_edge("check_token", "sync_state")
+        graph.add_edge("sync_state", END)
+
         return graph
 
     def _build_finish_section(self) -> StateGraph:
-        """构建 finish_section 子图 - 对话结束后的处理逻辑
-
-        包含：
-        - memory_check: 检查并保存记忆
-        - token_count: 统计 token
-        - check_token: 检查是否需要压缩
-        - sync_state: 同步状态到 SessionStore
-        """
+        """构建 finish_section 子图 - 最终同步"""
         from langgraph.graph import StateGraph as SubStateGraph
 
-        finish_graph = SubStateGraph(MainAgentState)
+        graph = SubStateGraph(MainAgentState)
+        graph.add_node("sync_state", self._sync_state_node)
+        graph.add_edge(START, "sync_state")
+        graph.add_edge("sync_state", END)
 
-        finish_graph.add_node("memory_check", memory_check_node)
-        finish_graph.add_node("token_count", token_count_node)
-        finish_graph.add_node("check_token", self._check_token_node_wrapper)
-        finish_graph.add_node("sync_state", self._sync_state_node)
-
-        # memory_check 和 token_count 并行 -> check_token -> sync_state
-        finish_graph.add_edge(START, "memory_check")
-        finish_graph.add_edge(START, "token_count")
-        finish_graph.add_edge("token_count", "check_token")
-        finish_graph.add_edge("check_token", "sync_state")
-        finish_graph.add_edge("memory_check", "sync_state")
-        finish_graph.add_edge("sync_state", END)
-
-        return finish_graph
+        return graph
 
     # ============ 节点方法 ============
 
@@ -236,11 +245,19 @@ class MainAgent(BaseAgent):
         return await check_token_node(state, self.context_window)
 
     async def _sync_state_node(self, state: MainAgentState) -> dict:
-        """同步状态到 SessionStore"""
+        """同步状态到 SessionStore（全量替换）
+
+        每次同步都清空旧消息，写入当前全量 messages。
+        压缩后 state["messages"] 已经是短列表，全量替换也是正确的。
+        """
         thread_id = state.get("thread_id", "default")
         messages = state.get("messages", [])
-        if messages:
-            self.session_store.add_messages_batch(thread_id, messages)
+        if not messages:
+            return {}
+
+        self.session_store.clear_messages(thread_id)
+        self.session_store.add_messages_batch(thread_id, messages)
+
         return {}
 
     # ============ 事件驱动循环 ============
@@ -300,7 +317,7 @@ class MainAgent(BaseAgent):
                 else:
                     break
 
-            # 5. finish_section
+            # 5. finish_section（token 计量、压缩等）
             self._current_state = await self.finish_section.ainvoke(self._current_state)
 
             # 6. 通知完成
@@ -337,7 +354,7 @@ class MainAgent(BaseAgent):
             error = event.data.get("error")
 
             summary = self._format_inbox_result(task_id, status, result, error)
-            self._current_state["messages"].append(SystemMessage(content=summary))
+            self._current_state["messages"].append(HumanMessage(content=summary))
             self._current_state["inbox_results"].append(
                 {
                     "task_id": task_id,

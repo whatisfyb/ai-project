@@ -50,8 +50,8 @@ def _register_main_agent(registry) -> None:
 
 
 def _register_subagents(registry) -> None:
-    """注册子代理（懒加载）"""
-    # Plan Agent
+    """注册子代理 Group（支持多实例动态创建）"""
+    # Plan Agent Group
     plan_card = AgentCard(
         id="plan-agent",
         name="Plan Agent",
@@ -62,15 +62,14 @@ def _register_subagents(registry) -> None:
             Skill(name="decompose", description="拆解复杂任务"),
         ],
     )
-    registry.register(
-        agent_id="plan-agent",
-        agent_type="subagent",
+    registry.register_group(
+        group_type="plan",
         card=plan_card,
         factory=_create_plan_agent,
-        auto_start=False,
+        max_instances=5,
     )
 
-    # Research Agent
+    # Research Agent Group
     research_card = AgentCard(
         id="research-agent",
         name="Research Agent",
@@ -82,15 +81,14 @@ def _register_subagents(registry) -> None:
             Skill(name="paper_kb", description="论文知识库"),
         ],
     )
-    registry.register(
-        agent_id="research-agent",
-        agent_type="subagent",
+    registry.register_group(
+        group_type="research",
         card=research_card,
         factory=_create_research_agent,
-        auto_start=False,
+        max_instances=5,
     )
 
-    # Analysis Agent
+    # Analysis Agent Group
     analysis_card = AgentCard(
         id="analysis-agent",
         name="Analysis Agent",
@@ -101,12 +99,11 @@ def _register_subagents(registry) -> None:
             Skill(name="report", description="报告生成"),
         ],
     )
-    registry.register(
-        agent_id="analysis-agent",
-        agent_type="subagent",
+    registry.register_group(
+        group_type="analysis",
         card=analysis_card,
         factory=_create_analysis_agent,
-        auto_start=False,
+        max_instances=5,
     )
 
 

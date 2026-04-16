@@ -63,9 +63,6 @@ from agent.a2a.worker import (
 
 from agent.a2a.tools import (
     plan_dispatch,
-    job_status,
-    job_list,
-    job_wait,
     worker_list,
 )
 
@@ -128,9 +125,6 @@ __all__ = [
     "A2AWorkerPool",
     # Tools
     "plan_dispatch",
-    "job_status",
-    "job_list",
-    "job_wait",
     "worker_list",
     # Dispatcher
     "TaskResult",

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 class PlanTask(BaseModel):
     """Plan 中的执行单元"""
+
     id: str = Field(description="任务唯一标识，如 T1, T2, T3")
     description: str = Field(description="任务详细描述")
     dependencies: list[str] = Field(default=[], description="依赖的任务 ID 列表")
@@ -20,6 +21,7 @@ class PlanTask(BaseModel):
 
 class Plan(BaseModel):
     """执行计划"""
+
     goal: str = Field(description="整体目标")
     tasks: list[PlanTask] = Field(description="任务列表")
     status: Literal["pending", "completed", "failed"] = Field(
@@ -30,6 +32,7 @@ class Plan(BaseModel):
 
 class MainAgentState(TypedDict):
     """Main Agent 状态"""
+
     messages: list[dict]  # 消息历史
     current_task: str | None  # 当前任务
     memory_context: str | None  # 记忆上下文
