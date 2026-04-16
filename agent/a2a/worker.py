@@ -6,6 +6,7 @@ Worker 作为 A2A Agent，接收 MainAgent 分发的任务并异步执行。
 - 接收 A2A Task
 - 执行 PlanTask
 - 状态回传
+- 继承 BaseAgent 标准接口
 """
 
 import queue
@@ -28,10 +29,12 @@ from agent.a2a.models import (
     Skill,
 )
 from agent.a2a.transport import InMemoryTransport, TaskCallback
-from agent.core.signals import is_interrupted
+from agent.core.signals import is_interrupted, save_checkpoint
+from agent.core.base_agent import BaseAgent
 
 
 # ============ Worker 工具获取 ============
+
 
 def _get_default_tools():
     """获取 Worker 默认可用工具
@@ -58,20 +61,17 @@ def _get_default_tools():
         # Web 和知识库
         web,
         paper_kb,
-
         # 文件操作
         read,
         write,
         append,
         edit,
         edit_regex,
-
         # 搜索
         grep,
         grep_count,
         glob,
         glob_list,
-
         # Shell
         bash,
         bash_script,
@@ -80,16 +80,19 @@ def _get_default_tools():
 
 # ============ A2A Worker Agent ============
 
-class A2AWorker:
+
+class A2AWorker(BaseAgent):
     """A2A Worker Agent
 
     作为 A2A Agent 注册到 Transport，接收并执行任务。
+    继承 BaseAgent 标准接口，支持 Registry 生命周期管理。
 
     特点：
     - 异步执行：任务放入队列，后台线程处理
     - 非阻塞：handler 立即返回，不阻塞调用方
     - 状态回传：执行完成后更新 Task 状态
     - 支持订阅：MainAgent 可订阅任务完成事件
+    - 状态保存/恢复：支持检查点
 
     使用方式：
         transport = InMemoryTransport()
@@ -98,6 +101,8 @@ class A2AWorker:
 
         # 之后 MainAgent 可以通过 transport.send_message() 发送任务
     """
+
+    agent_type = "worker"
 
     def __init__(
         self,
@@ -116,7 +121,8 @@ class A2AWorker:
             max_iterations: LLM 工具调用最大迭代次数
             task_timeout: 单任务超时时间（秒）
         """
-        self.worker_id = worker_id or f"worker-{uuid.uuid4().hex[:8]}"
+        self.agent_id = worker_id or f"worker-{uuid.uuid4().hex[:8]}"
+        self.worker_id = self.agent_id
         self.transport = transport or self._get_default_transport()
         self.tools = tools or _get_default_tools()
         self.max_iterations = max_iterations
@@ -140,6 +146,7 @@ class A2AWorker:
     def _get_default_transport(self) -> InMemoryTransport:
         """获取默认 Transport"""
         from agent.a2a.transport import get_transport
+
         return get_transport()
 
     def _build_card(self) -> AgentCard:
@@ -147,20 +154,16 @@ class A2AWorker:
         skills = [
             # 核心能力
             Skill(name="execute_plantask", description="执行 PlanTask 任务"),
-
             # Web 和知识库
             Skill(name="web", description="Web 搜索、抓取、arXiv 论文搜索"),
             Skill(name="paper_kb", description="论文知识库查询"),
-
             # 文件操作
             Skill(name="read", description="读取文件内容"),
             Skill(name="write", description="写入文件"),
             Skill(name="edit", description="编辑文件"),
-
             # 搜索
             Skill(name="grep", description="文件内容搜索"),
             Skill(name="glob", description="文件名搜索"),
-
             # Shell
             Skill(name="bash", description="执行 Shell 命令"),
         ]
@@ -186,7 +189,11 @@ class A2AWorker:
     @property
     def is_running(self) -> bool:
         """Worker 是否正在运行"""
-        return self._running and self._worker_thread is not None and self._worker_thread.is_alive()
+        return (
+            self._running
+            and self._worker_thread is not None
+            and self._worker_thread.is_alive()
+        )
 
     @property
     def current_task(self) -> Task | None:
@@ -203,6 +210,47 @@ class A2AWorker:
             "failed": self._failed_count,
             "current_task": self._current_task.id if self._current_task else None,
         }
+
+    # ============ BaseAgent 接口实现 ============
+
+    def get_card(self) -> AgentCard:
+        """返回 Agent 能力声明"""
+        return self._card
+
+    def handle_task(self, task: Task) -> Any:
+        """处理 A2A Task
+
+        Args:
+            task: A2A Task 对象
+
+        Returns:
+            任务执行结果
+        """
+        if not task.history:
+            return {"success": False, "error": "Empty task"}
+
+        message = task.history[0]
+        self._handle_message(task, message)
+        return {"success": True, "task_id": task.id}
+
+    def get_state(self) -> dict[str, Any]:
+        """获取当前状态（用于检查点保存）"""
+        return {
+            "worker_id": self.worker_id,
+            "completed_count": self._completed_count,
+            "failed_count": self._failed_count,
+            "current_task_id": self._current_task.id if self._current_task else None,
+        }
+
+    def restore_state(self, state: dict[str, Any]) -> None:
+        """恢复状态（从检查点恢复）"""
+        self._completed_count = state.get("completed_count", 0)
+        self._failed_count = state.get("failed_count", 0)
+
+    def on_interrupt(self) -> None:
+        """中断回调 - 保存检查点"""
+        state = self.get_state()
+        save_checkpoint(self.agent_id, state)
 
     # ============ 生命周期 ============
 
@@ -305,6 +353,7 @@ class A2AWorker:
             except Exception as e:
                 # 意外错误
                 import traceback
+
                 traceback.print_exc()
 
     def _execute_task(self, task: Task, message: Message) -> None:
@@ -322,6 +371,7 @@ class A2AWorker:
         if plantask_info:
             # 从 PlanStore 获取任务描述
             from store.plan import PlanStore
+
             store = PlanStore()
             plan_id = plantask_info.get("plan_id", "")
             task_id = plantask_info.get("task_id", "")
@@ -335,6 +385,7 @@ class A2AWorker:
 
         # 报告状态：开始运行
         from agent.main.tui import get_worker_tracker
+
         tracker = get_worker_tracker()
         tracker.set_running(
             worker_id=self.worker_id,
@@ -377,10 +428,7 @@ class A2AWorker:
         except Exception as e:
             # 执行失败
             error_msg = f"执行失败: {str(e)}"
-            self.transport.add_task_message(
-                task.id,
-                Message.agent_text(error_msg)
-            )
+            self.transport.add_task_message(task.id, Message.agent_text(error_msg))
             self.transport.update_task_status(task.id, TaskStatus.FAILED)
             self._failed_count += 1
 
@@ -394,7 +442,9 @@ class A2AWorker:
             self._report_task_result(task, final_status, final_result, final_error)
 
             # 报告状态：完成/失败
-            tracker.set_done(self.worker_id, success=(final_status == TaskStatus.COMPLETED))
+            tracker.set_done(
+                self.worker_id, success=(final_status == TaskStatus.COMPLETED)
+            )
 
     def _report_task_result(
         self,
@@ -415,7 +465,9 @@ class A2AWorker:
         task_result = TaskResult(
             plan_id=task.plan_id,
             task_id=task.plantask_id,
-            status=TaskResultStatus.SUCCESS if status == TaskStatus.COMPLETED else TaskResultStatus.FAILED,
+            status=TaskResultStatus.SUCCESS
+            if status == TaskStatus.COMPLETED
+            else TaskResultStatus.FAILED,
             result=result,
             error=error,
             job_id=task.id,
@@ -537,23 +589,32 @@ class A2AWorker:
                         tool_result = tool.invoke(tool_args)
                         if isinstance(tool_result, dict):
                             import json
-                            tool_result = json.dumps(tool_result, ensure_ascii=False, indent=2)
+
+                            tool_result = json.dumps(
+                                tool_result, ensure_ascii=False, indent=2
+                            )
                         elif not isinstance(tool_result, str):
                             tool_result = str(tool_result)
                     except Exception as e:
                         tool_result = f"工具执行错误: {str(e)}"
 
-                messages.append({
-                    "role": "assistant",
-                    "content": response.content if hasattr(response, "content") else "",
-                    "tool_calls": [tool_call],
-                })
-                messages.append({
-                    "role": "tool",
-                    "content": tool_result,
-                    "name": tool_name,
-                    "tool_call_id": tool_call.get("id"),
-                })
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": response.content
+                        if hasattr(response, "content")
+                        else "",
+                        "tool_calls": [tool_call],
+                    }
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "content": tool_result,
+                        "name": tool_name,
+                        "tool_call_id": tool_call.get("id"),
+                    }
+                )
 
         # 达到最大迭代次数
         result = "任务执行达到最大迭代次数"
@@ -593,7 +654,10 @@ class A2AWorker:
                         tool_result = tool.invoke(tool_args)
                         if isinstance(tool_result, dict):
                             import json
-                            tool_result = json.dumps(tool_result, ensure_ascii=False, indent=2)
+
+                            tool_result = json.dumps(
+                                tool_result, ensure_ascii=False, indent=2
+                            )
                         elif not isinstance(tool_result, str):
                             tool_result = str(tool_result)
                     except Exception as e:
@@ -601,22 +665,27 @@ class A2AWorker:
                 else:
                     tool_result = f"未找到工具: {tool_name}"
 
-                messages.append({
-                    "role": "assistant",
-                    "content": response.content or "",
-                    "tool_calls": [tool_call],
-                })
-                messages.append({
-                    "role": "tool",
-                    "content": tool_result,
-                    "name": tool_name,
-                    "tool_call_id": tool_call.get("id"),
-                })
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": response.content or "",
+                        "tool_calls": [tool_call],
+                    }
+                )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "content": tool_result,
+                        "name": tool_name,
+                        "tool_call_id": tool_call.get("id"),
+                    }
+                )
 
         return "任务执行达到最大迭代次数"
 
 
 # ============ Worker Pool ============
+
 
 class A2AWorkerPool:
     """A2A Worker 池
@@ -645,13 +714,14 @@ class A2AWorkerPool:
 
     def _get_default_transport(self) -> InMemoryTransport:
         from agent.a2a.transport import get_transport
+
         return get_transport()
 
     def start(self) -> None:
         """启动所有 Worker"""
         for i in range(self.num_workers):
             worker = A2AWorker(
-                worker_id=f"worker-{i+1}",
+                worker_id=f"worker-{i + 1}",
                 transport=self.transport,
                 tools=self.tools,
             )

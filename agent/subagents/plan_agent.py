@@ -1,12 +1,14 @@
 """Plan Agent - 复杂任务拆解"""
 
 import json
-from typing import Literal
+from typing import Literal, Any
 from typing_extensions import TypedDict
 
 from langgraph.graph import StateGraph, END, START
 
 from agent.core.models import Plan, PlanTask
+from agent.core.base_agent import BaseAgent
+from agent.a2a.models import AgentCard, AgentCapabilities, Skill
 from agent.subagents.base import BaseSubagent
 from store.plan import PlanStore
 
@@ -21,7 +23,7 @@ class PlanAgentState(TypedDict):
     thread_id: str  # 会话 ID
 
 
-class PlanAgent(BaseSubagent[PlanAgentState]):
+class PlanAgent(BaseSubagent[PlanAgentState], BaseAgent):
     """Plan Agent - 复杂任务拆解
 
     职责：
@@ -32,13 +34,14 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
     - 持久化存储
     """
 
+    agent_id = "plan-agent"
+    agent_type = "Plan"
+
     def __init__(self):
         super().__init__()
         self.store = PlanStore()
 
-    @property
-    def agent_type(self) -> str:
-        return "Plan"
+    # ============ BaseSubagent 接口 ============
 
     @property
     def description(self) -> str:
@@ -47,6 +50,27 @@ class PlanAgent(BaseSubagent[PlanAgentState]):
     @property
     def tools(self) -> list:
         return []
+
+    # ============ BaseAgent 接口 ============
+
+    def get_card(self) -> AgentCard:
+        """返回 Agent 能力声明"""
+        return AgentCard(
+            id=self.agent_id,
+            name="Plan Agent",
+            description="规划代理，分析复杂需求并拆解为子任务",
+            capabilities=AgentCapabilities(text=True),
+            skills=[
+                Skill(name="plan", description="生成执行计划"),
+                Skill(name="decompose", description="拆解复杂任务"),
+            ],
+        )
+
+    def handle_task(self, task) -> Any:
+        """处理 A2A Task"""
+        message = task.history[0].get_text() if task.history else ""
+        plan, plan_id = self.run(task=message, thread_id=task.metadata.get("thread_id", "default"))
+        return {"plan": plan, "plan_id": plan_id}
 
     def _plan_node(self, state: PlanAgentState) -> dict:
         """生成计划节点"""

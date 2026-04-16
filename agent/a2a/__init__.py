@@ -74,11 +74,11 @@ from agent.a2a.dispatcher import (
     TaskResult,
     TaskResultStatus,
     Inbox,
-    # 状态
+    # 状态（已弃用，使用 AgentRegistry 生命周期状态）
     MainAgentBusyState,
     # 全局实例
     get_inbox,
-    get_agent_state,
+    get_agent_state,  # 已弃用
 )
 
 __all__ = [

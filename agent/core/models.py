@@ -34,3 +34,6 @@ class MainAgentState(TypedDict):
     current_task: str | None  # 当前任务
     memory_context: str | None  # 记忆上下文
     thread_id: str  # 会话 ID
+    # 事件驱动相关字段
+    event_type: str  # 触发事件类型 ("user_input" | "inbox_notification")
+    inbox_results: list[dict]  # inbox 通知的结果列表

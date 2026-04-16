@@ -7,6 +7,8 @@ import operator
 from langchain_core.tools import tool
 from langgraph.graph import StateGraph, END, START
 
+from agent.core.base_agent import BaseAgent
+from agent.a2a.models import AgentCard, AgentCapabilities, Skill
 from agent.subagents.base import BaseSubagent
 from agent.core.models import Plan, PlanTask
 
@@ -20,7 +22,7 @@ class AnalysisAgentState(TypedDict):
     file_path: str | None  # 输出文件路径
 
 
-class AnalysisAgent(BaseSubagent[AnalysisAgentState]):
+class AnalysisAgent(BaseSubagent[AnalysisAgentState], BaseAgent):
     """Analysis Agent - 数据分析与报告生成
 
     职责：
@@ -29,9 +31,10 @@ class AnalysisAgent(BaseSubagent[AnalysisAgentState]):
     - 可视化建议
     """
 
-    @property
-    def agent_type(self) -> str:
-        return "Analysis"
+    agent_id = "analysis-agent"
+    agent_type = "Analysis"
+
+    # ============ BaseSubagent 接口 ============
 
     @property
     def description(self) -> str:
@@ -44,6 +47,26 @@ class AnalysisAgent(BaseSubagent[AnalysisAgentState]):
     def tools(self) -> list:
         # Analysis agent 主要用 LLM 进行分析，工具可选
         return []
+
+    # ============ BaseAgent 接口 ============
+
+    def get_card(self) -> AgentCard:
+        """返回 Agent 能力声明"""
+        return AgentCard(
+            id=self.agent_id,
+            name="Analysis Agent",
+            description="分析代理，数据分析、报告生成",
+            capabilities=AgentCapabilities(text=True, files=True),
+            skills=[
+                Skill(name="analysis", description="数据分析"),
+                Skill(name="report", description="报告生成"),
+            ],
+        )
+
+    def handle_task(self, task) -> Any:
+        """处理 A2A Task"""
+        message = task.history[0].get_text() if task.history else ""
+        return self.run(task=message, thread_id=task.metadata.get("thread_id", "default"))
 
     def _collect_data_node(self, state: AnalysisAgentState) -> dict:
         """收集数据节点"""

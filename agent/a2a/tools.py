@@ -4,6 +4,8 @@
 - plan_dispatch: 非阻塞分发 Plan 给 Worker 执行
 - job_status: 查询 A2A Task 状态
 - job_list: 列出当前会话的 A2A Task
+- job_wait: 等待 A2A Task 完成
+- worker_list: 列出所有 Worker
 """
 
 from typing import Any
@@ -16,43 +18,18 @@ from agent.a2a.transport import InMemoryTransport, get_transport
 from store.plan import PlanStore
 
 
-# ============ 内部辅助函数 ============
+# ============ Plan 分发工具 ============
+
 
 def _get_current_thread_id() -> str | None:
     """获取当前会话 ID"""
     try:
         from agent.main.agent import _current_thread_id
+
         return _current_thread_id.get()
     except:
         return None
 
-
-def _get_or_create_worker_pool(transport: InMemoryTransport, num_workers: int = 2):
-    """获取或创建 Worker Pool
-
-    Worker Pool 是全局单例，按需创建。
-    """
-    from agent.a2a.worker import A2AWorkerPool
-
-    # 使用模块级变量存储 Worker Pool
-    global _worker_pool
-
-    if '_worker_pool' not in globals():
-        _worker_pool = None
-
-    if _worker_pool is None:
-        _worker_pool = A2AWorkerPool(num_workers=num_workers, transport=transport)
-        _worker_pool.start()
-
-    return _worker_pool
-
-
-def _ensure_workers_started(transport: InMemoryTransport):
-    """确保 Workers 已启动"""
-    _get_or_create_worker_pool(transport)
-
-
-# ============ Plan 分发工具 ============
 
 @tool
 def plan_dispatch(plan_id: str, num_workers: int = 2) -> dict[str, Any]:
@@ -70,6 +47,9 @@ def plan_dispatch(plan_id: str, num_workers: int = 2) -> dict[str, Any]:
         Dispatch result with job IDs for tracking
     """
     transport = get_transport()
+    from agent.core.registry import get_registry
+
+    registry = get_registry()
     store = PlanStore()
 
     # 加载 Plan
@@ -91,10 +71,10 @@ def plan_dispatch(plan_id: str, num_workers: int = 2) -> dict[str, Any]:
     plan_thread_id = None
 
     import sqlite3
+
     with sqlite3.connect(store.db_path) as conn:
         cursor = conn.execute(
-            "SELECT thread_id FROM plans WHERE plan_id = ?",
-            (plan_id,)
+            "SELECT thread_id FROM plans WHERE plan_id = ?", (plan_id,)
         )
         row = cursor.fetchone()
         if row:
@@ -114,11 +94,13 @@ def plan_dispatch(plan_id: str, num_workers: int = 2) -> dict[str, Any]:
             "error": "No executable tasks (all may have unsatisfied dependencies)",
         }
 
-    # 确保 Workers 已启动
-    _ensure_workers_started(transport)
+    # 通过 Registry 查找 Worker
+    workers = registry.find_agents_by_skill("execute_plantask")
 
-    # 获取可用 Worker
-    workers = transport.find_agents_by_skill("execute_plantask")
+    if not workers:
+        # Fallback: 通过 Transport 查找
+        workers = transport.find_agents_by_skill("execute_plantask")
+
     if not workers:
         return {
             "success": False,
@@ -140,24 +122,116 @@ def plan_dispatch(plan_id: str, num_workers: int = 2) -> dict[str, Any]:
             sender_id="main",
             receiver_id=worker_id,
             initial_message=Message(
-                role="user",
-                parts=[Part.plantask(plan_id=plan_id, task_id=plantask.id)]
+                role="user", parts=[Part.plantask(plan_id=plan_id, task_id=plantask.id)]
+            ),
+            plan_id=plan_id,
+            plantask_id=plantask.id,
+        )
+
+        # 通过 Transport 分发（Worker 注册在 Transport 上）
+        transport.message_send(
+            a2a_task,
+            Message(
+                role="user", parts=[Part.plantask(plan_id=plan_id, task_id=plantask.id)]
+            ),
+        )
+
+        dispatched_jobs.append(
+            {
+                "job_id": a2a_task.id,
+                "task_id": plantask.id,
+                "worker_id": worker_id,
+            }
+        )
+
+    return {
+        "success": True,
+        "plan_id": plan_id,
+        "goal": plan.goal,
+        "dispatched_count": len(dispatched_jobs),
+        "jobs": dispatched_jobs,
+        "message": f"已分发 {len(dispatched_jobs)} 个任务到 {len(workers)} 个 Worker。使用 job_status 查询进度。",
+    }
+
+    if not plan.tasks:
+        return {
+            "success": False,
+            "error": "Plan has no tasks to execute",
+        }
+
+    # 检查会话归属
+    current_thread_id = _get_current_thread_id()
+    plan_thread_id = None
+
+    import sqlite3
+
+    with sqlite3.connect(store.db_path) as conn:
+        cursor = conn.execute(
+            "SELECT thread_id FROM plans WHERE plan_id = ?", (plan_id,)
+        )
+        row = cursor.fetchone()
+        if row:
+            plan_thread_id = row[0]
+
+    if current_thread_id and plan_thread_id and current_thread_id != plan_thread_id:
+        return {
+            "success": False,
+            "error": f"Plan {plan_id} 属于会话 {plan_thread_id}，当前会话是 {current_thread_id}。",
+        }
+
+    # 获取可执行的待处理任务
+    pending_tasks = store.get_pending_tasks(plan_id)
+    if not pending_tasks:
+        return {
+            "success": False,
+            "error": "No executable tasks (all may have unsatisfied dependencies)",
+        }
+
+    # 通过 Registry 查找 Worker
+    workers = registry.find_agents_by_skill("execute_plantask")
+
+    if not workers:
+        return {
+            "success": False,
+            "error": "No workers available. Workers may not have started.",
+        }
+
+    # 为每个 PlanTask 创建 A2A Task 并分发
+    dispatched_jobs = []
+    worker_idx = 0
+
+    for plantask in pending_tasks:
+        # 轮询选择 Worker
+        worker_card = workers[worker_idx % len(workers)]
+        worker_id = worker_card.id
+        worker_idx += 1
+
+        # 创建 A2A Task
+        a2a_task = transport.create_task(
+            sender_id="main",
+            receiver_id=worker_id,
+            initial_message=Message(
+                role="user", parts=[Part.plantask(plan_id=plan_id, task_id=plantask.id)]
             ),
             plan_id=plan_id,
             plantask_id=plantask.id,
         )
 
         # 分发给 Worker（非阻塞）
-        transport.message_send(a2a_task, Message(
-            role="user",
-            parts=[Part.plantask(plan_id=plan_id, task_id=plantask.id)]
-        ))
+        transport.message_send(
+            a2a_task,
+            Message(
+                role="user", parts=[Part.plantask(plan_id=plan_id, task_id=plantask.id)]
+            ),
+        )
 
-        dispatched_jobs.append({
-            "job_id": a2a_task.id,
-            "task_id": plantask.id,
-            "worker_id": worker_id,
-        })
+        dispatched_jobs.append(
+            {
+                "job_id": a2a_task.id,
+                "task_id": plantask.id,
+                "worker_id": worker_id,
+            }
+        )
 
     return {
         "success": True,
@@ -170,6 +244,7 @@ def plan_dispatch(plan_id: str, num_workers: int = 2) -> dict[str, Any]:
 
 
 # ============ Job 状态查询工具 ============
+
 
 @tool
 def job_status(job_id: str) -> dict[str, Any]:
@@ -235,14 +310,16 @@ def job_list(plan_id: str | None = None) -> dict[str, Any]:
 
     jobs_info = []
     for task in tasks:
-        jobs_info.append({
-            "job_id": task.id,
-            "status": task.status.value,
-            "plan_id": task.plan_id,
-            "plantask_id": task.plantask_id,
-            "worker_id": task.receiver_id,
-            "updated_at": task.updated_at.isoformat(),
-        })
+        jobs_info.append(
+            {
+                "job_id": task.id,
+                "status": task.status.value,
+                "plan_id": task.plan_id,
+                "plantask_id": task.plantask_id,
+                "worker_id": task.receiver_id,
+                "updated_at": task.updated_at.isoformat(),
+            }
+        )
 
     return {
         "success": True,
@@ -292,7 +369,11 @@ def job_wait(job_id: str, timeout: int = 60) -> dict[str, Any]:
     final_task = {"task": task}
 
     def on_complete(t, event):
-        if t.id == job_id and event in (TaskEvent.COMPLETED, TaskEvent.FAILED, TaskEvent.CANCELLED):
+        if t.id == job_id and event in (
+            TaskEvent.COMPLETED,
+            TaskEvent.FAILED,
+            TaskEvent.CANCELLED,
+        ):
             final_task["task"] = t
             done_event.set()
 
@@ -317,6 +398,7 @@ def job_wait(job_id: str, timeout: int = 60) -> dict[str, Any]:
 
 # ============ Worker 管理工具 ============
 
+
 @tool
 def worker_list() -> dict[str, Any]:
     """List all registered A2A workers.
@@ -324,23 +406,39 @@ def worker_list() -> dict[str, Any]:
     Returns:
         List of workers with their status
     """
-    transport = get_transport()
+    from agent.core.registry import get_registry
 
-    agents = transport.list_agents()
+    registry = get_registry()
+
+    # 通过 Registry 查找 worker 类型的 Agent
+    agents = registry.list_agents()
+    states = registry.get_all_states()
 
     workers_info = []
     for card in agents:
-        workers_info.append({
-            "worker_id": card.id,
-            "name": card.name,
-            "description": card.description,
-            "skills": [s.name for s in card.skills],
-            "capabilities": {
-                "text": card.capabilities.text,
-                "files": card.capabilities.files,
-                "streaming": card.capabilities.streaming,
-            },
-        })
+        state = states.get(card.id)
+        if state is None:
+            continue
+
+        # 检查是否有 execute_plantask 技能
+        skill_names = [s.name for s in card.skills]
+        if "execute_plantask" not in skill_names:
+            continue
+
+        workers_info.append(
+            {
+                "worker_id": card.id,
+                "name": card.name,
+                "description": card.description,
+                "skills": skill_names,
+                "capabilities": {
+                    "text": card.capabilities.text,
+                    "files": card.capabilities.files,
+                    "streaming": card.capabilities.streaming,
+                },
+                "state": state.value,
+            }
+        )
 
     return {
         "success": True,

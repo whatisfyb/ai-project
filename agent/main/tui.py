@@ -1,4 +1,4 @@
-"""Textual TUI for Main Agent"""
+"""Textual TUI for Main Agent（事件驱动架构）"""
 
 import asyncio
 import threading
@@ -16,10 +16,11 @@ from agent.main.command import CommandHandler, execute_tui_command
 from agent.core.registry import agent_registry, terminate
 from agent.core.signals import set_interrupt, clear_interrupt, is_interrupted
 from store.session import SessionStore
-from agent.a2a.dispatcher import get_inbox, get_agent_state, TaskResultStatus
+from agent.a2a.dispatcher import get_inbox, TaskResultStatus
 
 
 # ============ Worker 状态追踪 ============
+
 
 class WorkerStatusTracker:
     """Worker 状态追踪器（全局单例）"""
@@ -37,7 +38,9 @@ class WorkerStatusTracker:
             cls._instance = cls()
         return cls._instance
 
-    def set_running(self, worker_id: str, task_id: str, description: str, plan_id: str = ""):
+    def set_running(
+        self, worker_id: str, task_id: str, description: str, plan_id: str = ""
+    ):
         with self._lock:
             self._workers[worker_id] = {
                 "status": "running",
@@ -57,7 +60,10 @@ class WorkerStatusTracker:
 
     def clear_done(self, worker_id: str):
         with self._lock:
-            if worker_id in self._workers and self._workers[worker_id]["status"] in ("done", "failed"):
+            if worker_id in self._workers and self._workers[worker_id]["status"] in (
+                "done",
+                "failed",
+            ):
                 del self._workers[worker_id]
         self._notify_callbacks()
 
@@ -82,8 +88,9 @@ def get_worker_tracker() -> WorkerStatusTracker:
 
 # ============ TUI App ============
 
+
 class MainAgentTUI(App):
-    """Main Agent TUI"""
+    """Main Agent TUI（事件驱动架构）"""
 
     CSS = """
     Screen {
@@ -146,10 +153,11 @@ class MainAgentTUI(App):
         self.agent = create_main_agent()
         self.session_store = SessionStore()
         self.inbox = get_inbox()
-        self.agent_state = get_agent_state()
         self.worker_tracker = get_worker_tracker()
         self.thread_id: str = ""
+        self._busy: bool = False
         self._command_handler: Optional[CommandHandler] = None
+        self._agent_loop_task: Optional[asyncio.Task] = None
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
@@ -166,36 +174,47 @@ class MainAgentTUI(App):
         if sessions:
             self.thread_id = sessions[0]["session_id"]
             from agent.middleware.token_count import recalculate_session_tokens
+
             recalculate_session_tokens(self.thread_id)
             self._show_history()
         else:
             import time
+
             self.thread_id = f"session_{int(time.time())}"
             self.session_store.create_session(self.thread_id)
 
         self._update_status()
+
+        # 订阅 Worker 状态变化
         self.worker_tracker.subscribe(self._on_worker_change)
-        asyncio.create_task(self._background_checker())
+
+        # 启动 MainAgent 事件循环
+        self._agent_loop_task = asyncio.create_task(self._run_agent_loop())
+
+        # 启动状态检查（不再轮询 Inbox，只更新 UI）
+        asyncio.create_task(self._status_checker())
 
         # 初始化命令处理器
         self._command_handler = CommandHandler(self)
 
         self.query_one("#input", Input).focus()
 
-    async def _background_checker(self):
+    async def _run_agent_loop(self):
+        """运行 MainAgent 事件循环"""
+        await self.agent.run_loop(self.thread_id)
+
+    async def _status_checker(self):
+        """状态检查器（只更新 UI，不轮询 Inbox）"""
         while True:
             await asyncio.sleep(0.5)
             try:
                 self.inbox_count = self.inbox.size()
                 workers = self.worker_tracker.get_all()
-                self.running_count = sum(1 for w in workers.values() if w["status"] == "running")
+                self.running_count = sum(
+                    1 for w in workers.values() if w["status"] == "running"
+                )
                 self._update_status()
                 self._update_worker_panel()
-
-                if self.agent_state.is_idle() and not self.inbox.is_empty():
-                    results = self.inbox.get_all()
-                    if results:
-                        await self._handle_inbox(results)
             except:
                 pass
 
@@ -204,10 +223,13 @@ class MainAgentTUI(App):
 
     def _update_status(self):
         session = self.session_store.get_session(self.thread_id)
-        title = (session.get("title", self.thread_id) if session else self.thread_id)[:15]
+        title = (session.get("title", self.thread_id) if session else self.thread_id)[
+            :15
+        ]
         tokens = session.get("total_tokens", 0) if session else 0
 
         from utils.core.config import get_default_model_config, check_context_status
+
         model_config = get_default_model_config()
         context_status = check_context_status(tokens, model_config)
 
@@ -238,7 +260,11 @@ class MainAgentTUI(App):
 
         lines = []
         for wid, w in workers.items():
-            icon = {"running": "[yellow]●[/]", "done": "[green]✓[/]", "failed": "[red]✗[/]"}.get(w["status"], "○")
+            icon = {
+                "running": "[yellow]●[/]",
+                "done": "[green]✓[/]",
+                "failed": "[red]✗[/]",
+            }.get(w["status"], "○")
             desc = w.get("description", w.get("task_id", "?"))[:40]
             lines.append(f" {icon} [{wid}] {desc}")
 
@@ -312,7 +338,7 @@ class MainAgentTUI(App):
     @property
     def is_busy(self) -> bool:
         """是否正在运行"""
-        return not self.agent_state.is_idle()
+        return self._busy
 
     def _update_action_button(self):
         """更新按钮状态"""
@@ -329,7 +355,7 @@ class MainAgentTUI(App):
 
     def _do_interrupt(self):
         """执行中断"""
-        # 1. 设置中断信号（MainAgent.chat_async 会检查）
+        # 1. 设置中断信号
         set_interrupt()
 
         # 2. 终止 Plan 执行器（如果有）
@@ -338,8 +364,8 @@ class MainAgentTUI(App):
             if terminated:
                 self._append_chat(f"已终止任务: {', '.join(terminated)}")
 
+        self._busy = False
         self._append_chat("已中断")
-        self.agent_state.set_idle()
         self._update_status()
         self._update_action_button()
 
@@ -359,13 +385,14 @@ class MainAgentTUI(App):
 
         except Exception as e:
             import traceback
+
             traceback.print_exc()
             self._append_chat(f"错误: {e}")
 
     async def _call_agent(self, text: str):
         self._append_chat("Agent: ")
 
-        self.agent_state.set_busy()
+        self._busy = True
         self._update_status()
         self._update_action_button()
 
@@ -384,11 +411,15 @@ class MainAgentTUI(App):
         finally:
             # 清除中断信号
             clear_interrupt()
-            self.agent_state.set_idle()
+            self._busy = False
             self._update_status()
             self._update_action_button()
 
     async def _handle_inbox(self, results):
+        """处理 Inbox 结果（已废弃，由 MainAgent 事件循环处理）
+
+        保留此方法以兼容旧代码，但不再主动调用。
+        """
         self._append_chat("收到 Worker 任务结果...")
 
         lines = ["以下任务已完成："]
@@ -396,27 +427,6 @@ class MainAgentTUI(App):
             icon = "✓" if r.status == TaskResultStatus.SUCCESS else "✗"
             lines.append(f"  {icon} {r.task_id}: {(r.result or r.error or '?')[:100]}")
         self._append_chat("\n".join(lines))
-
-        prompt = "\n".join(lines) + "\n\n请分析结果并决定下一步。"
-
-        self.agent_state.set_busy()
-        self._update_status()
-        self._update_action_button()
-
-        def on_token(token):
-            try:
-                log = self.query_one("#chat-log", RichLog)
-                log.write(token)
-            except:
-                pass
-
-        try:
-            await self.agent.chat_async(prompt, self.thread_id, on_token=on_token)
-        finally:
-            clear_interrupt()
-            self.agent_state.set_idle()
-            self._update_status()
-            self._update_action_button()
 
     def action_interrupt(self):
         if agent_registry.is_running():
@@ -427,12 +437,24 @@ class MainAgentTUI(App):
     def action_clear(self):
         self._clear_chat()
 
+    def on_unmount(self) -> None:
+        """关闭时清理"""
+        # 关闭 MainAgent 事件循环
+        if self._agent_loop_task and not self._agent_loop_task.done():
+            asyncio.create_task(self.agent.shutdown())
+
 
 def run_tui():
     # Initialize MCP before starting TUI
     from mcp.manager import get_mcp_manager
+
     mcp_manager = get_mcp_manager()
     mcp_manager.initialize()
+
+    # Initialize Agent Registry
+    from agent.bootstrap import ensure_initialized
+
+    ensure_initialized()
 
     app = MainAgentTUI()
     app.run()

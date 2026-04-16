@@ -6,6 +6,8 @@ import operator
 
 from langgraph.graph import StateGraph, END, START
 
+from agent.core.base_agent import BaseAgent
+from agent.a2a.models import AgentCard, AgentCapabilities, Skill
 from agent.subagents.base import BaseSubagent
 from tools.web import web
 
@@ -19,7 +21,7 @@ class ResearchAgentState(TypedDict):
     summary: str | None  # 研究总结
 
 
-class ResearchAgent(BaseSubagent[ResearchAgentState]):
+class ResearchAgent(BaseSubagent[ResearchAgentState], BaseAgent):
     """Research Agent - 信息收集与研究
 
     职责：
@@ -29,9 +31,10 @@ class ResearchAgent(BaseSubagent[ResearchAgentState]):
     - 信息整合
     """
 
-    @property
-    def agent_type(self) -> str:
-        return "Research"
+    agent_id = "research-agent"
+    agent_type = "Research"
+
+    # ============ BaseSubagent 接口 ============
 
     @property
     def description(self) -> str:
@@ -43,6 +46,27 @@ class ResearchAgent(BaseSubagent[ResearchAgentState]):
     @property
     def tools(self) -> list:
         return [web]
+
+    # ============ BaseAgent 接口 ============
+
+    def get_card(self) -> AgentCard:
+        """返回 Agent 能力声明"""
+        return AgentCard(
+            id=self.agent_id,
+            name="Research Agent",
+            description="研究代理，搜索信息、下载论文、使用知识库",
+            capabilities=AgentCapabilities(text=True, files=True),
+            skills=[
+                Skill(name="research", description="研究分析"),
+                Skill(name="search", description="网络搜索"),
+                Skill(name="paper_kb", description="论文知识库"),
+            ],
+        )
+
+    def handle_task(self, task) -> Any:
+        """处理 A2A Task"""
+        message = task.history[0].get_text() if task.history else ""
+        return self.run(query=message, thread_id=task.metadata.get("thread_id", "default"))
 
     def _web_search_node(self, state: ResearchAgentState) -> dict:
         """网络搜索节点"""
