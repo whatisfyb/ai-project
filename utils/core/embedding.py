@@ -1,18 +1,22 @@
-"""Embedding 工具 - 本地 sentence-transformers 模型"""
+"""Embedding 工具 - 本地 sentence-transformers 模型
+
+注意：sentence_transformers 依赖 torch，可能导致循环导入。
+因此使用延迟导入，只在实际调用时才导入。
+"""
 
 from typing import Optional
-from sentence_transformers import SentenceTransformer
 
 from utils.core.config import Settings
 
 
-_embedding_model: Optional[SentenceTransformer] = None
+_embedding_model: Optional["SentenceTransformer"] = None
 
 
-def _get_model() -> SentenceTransformer:
-    """获取 Sentence Transformer 模型"""
+def _get_model() -> "SentenceTransformer":
+    """获取 Sentence Transformer 模型（延迟导入）"""
     global _embedding_model
     if _embedding_model is None:
+        from sentence_transformers import SentenceTransformer
         settings = Settings()
         model_name = settings.embedding.model
         _embedding_model = SentenceTransformer(model_name)

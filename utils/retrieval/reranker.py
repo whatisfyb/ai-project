@@ -1,7 +1,10 @@
-"""重排序模块 - Cross-Encoder 模型对检索结果精排"""
+"""重排序模块 - Cross-Encoder 模型对检索结果精排
+
+注意：sentence_transformers 依赖 torch，可能导致循环导入。
+因此使用延迟导入。
+"""
 
 from typing import Optional
-from sentence_transformers import CrossEncoder
 
 from langchain_core.documents import Document
 
@@ -10,13 +13,14 @@ from langchain_core.documents import Document
 DEFAULT_MODEL = "BAAI/bge-reranker-base"
 
 # 模型实例缓存
-_reranker_model: Optional[CrossEncoder] = None
+_reranker_model: Optional["CrossEncoder"] = None
 
 
-def get_reranker() -> CrossEncoder:
+def get_reranker() -> "CrossEncoder":
     """获取重排序模型（懒加载）"""
     global _reranker_model
     if _reranker_model is None:
+        from sentence_transformers import CrossEncoder
         _reranker_model = CrossEncoder(DEFAULT_MODEL)
     return _reranker_model
 
