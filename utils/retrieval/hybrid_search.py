@@ -55,11 +55,7 @@ def rrf_fusion(
             doc_scores[doc_id] = (old_doc, old_score + rrf_score)
 
     # 按融合分数排序
-    sorted_results = sorted(
-        doc_scores.values(),
-        key=lambda x: x[1],
-        reverse=True
-    )
+    sorted_results = sorted(doc_scores.values(), key=lambda x: x[1], reverse=True)
 
     return sorted_results[:top_k]
 
@@ -88,14 +84,19 @@ class HybridSearcher:
         filter: Optional[dict] = None,
         use_bm25: bool = True,
     ) -> list[tuple[Document, float]]:
-        """混合检索（协程并发执行）"""
-        # 如果不用全文检索，直接返回向量结果
+        """混合检索（协程并发执行）
+
+        Args:
+            query: 查询文本
+            k: 返回数量
+            filter: 元数据过滤条件
+            use_bm25: 是否使用全文检索
+        """
         if not use_bm25:
             return self.vector_store.similarity_search_with_score(
                 query, k=k, filter=filter
             )
 
-        # 协程并发执行
         return asyncio.run(self._search_async(query, k, filter))
 
     async def _search_async(
@@ -107,14 +108,11 @@ class HybridSearcher:
         """异步并发检索"""
         loop = asyncio.get_event_loop()
         vector_task = loop.run_in_executor(
-            None,
-            self.vector_store.similarity_search_with_score,
-            query, k, filter
+            None, self.vector_store.similarity_search_with_score, query, k, filter
         )
+        whoosh_filter = self._to_whoosh_filter(filter) if filter else None
         whoosh_task = loop.run_in_executor(
-            None,
-            self.whoosh_index.search,
-            query, k
+            None, self.whoosh_index.search, query, k, whoosh_filter
         )
         vector_results, whoosh_results = await asyncio.gather(vector_task, whoosh_task)
 
@@ -123,6 +121,45 @@ class HybridSearcher:
         if not vector_results:
             return whoosh_results
         return rrf_fusion(vector_results, whoosh_results, top_k=k)
+
+    @staticmethod
+    def _to_whoosh_filter(filter_dict: dict) -> dict:
+        """将 ChromaDB 风格 filter 转换为 Whoosh filter
+
+        ChromaDB: {"section": "abstract"}, {"$and": [{"section": "abstract"}, {"year": {"$gte": 2020}}]}
+        Whoosh: {"section": "abstract", "year_min": 2020}
+        """
+        whoosh_filter = {}
+
+        if "$and" in filter_dict:
+            for cond in filter_dict["$and"]:
+                for key, val in cond.items():
+                    if key == "year" and isinstance(val, dict):
+                        if "$gte" in val:
+                            whoosh_filter["year_min"] = val["$gte"]
+                        if "$lte" in val:
+                            whoosh_filter["year_max"] = val["$lte"]
+                    elif key == "authors" and isinstance(val, dict):
+                        whoosh_filter["authors"] = val.get("$contains", str(val))
+                    elif key == "keywords" and isinstance(val, dict):
+                        whoosh_filter["keywords"] = val.get("$contains", str(val))
+                    else:
+                        whoosh_filter[key] = val
+        else:
+            for key, val in filter_dict.items():
+                if key == "year" and isinstance(val, dict):
+                    if "$gte" in val:
+                        whoosh_filter["year_min"] = val["$gte"]
+                    if "$lte" in val:
+                        whoosh_filter["year_max"] = val["$lte"]
+                elif key == "authors" and isinstance(val, dict):
+                    whoosh_filter["authors"] = val.get("$contains", str(val))
+                elif key == "keywords" and isinstance(val, dict):
+                    whoosh_filter["keywords"] = val.get("$contains", str(val))
+                else:
+                    whoosh_filter[key] = val
+
+        return whoosh_filter
 
     def add_documents(
         self,

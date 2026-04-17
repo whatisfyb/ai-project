@@ -13,12 +13,14 @@ from langchain_core.documents import Document
 from utils.document.file_loader import FileLoader
 from utils.document.pdf_preprocessor import PDFPreprocessor
 from utils.chunking.structure_chunker import StructureChunker
+from utils.chunking.chunk_pipeline import SplitterPipeline
 from utils.retrieval.vector_store import VectorStore
 
 
 @dataclass
 class PaperMeta:
     """论文元数据"""
+
     paper_id: str
     title: str = ""
     authors: list[str] = field(default_factory=list)
@@ -33,6 +35,7 @@ class PaperMeta:
 @dataclass
 class PaperSection:
     """论文章节"""
+
     section_type: str  # abstract, introduction, conclusion
     content: str
     paper_id: str
@@ -44,6 +47,17 @@ TARGET_SECTIONS = {
     "abstract": ["abstract", "摘要", "摘　要"],
     "introduction": ["introduction", "引言"],
     "conclusion": ["conclusion", "conclusions", "结论", "结束语"],
+    "method": ["method", "methods", "methodology", "方法", "方法学", "实验方法"],
+    "results": ["results", "findings", "结果", "实验结果", "实验"],
+    "discussion": ["discussion", "讨论", "分析与讨论"],
+    "related_work": [
+        "related work",
+        "related_work",
+        "相关工作",
+        "文献综述",
+        "literature review",
+    ],
+    "background": ["background", "背景", "研究背景"],
 }
 
 
@@ -52,12 +66,12 @@ INLINE_SECTION_PATTERNS = [
     # 摘要：内容 或 摘　要：内容（匹配到关键词或引言之前）
     re.compile(
         r"^(摘\s*要)[：:]\s*(.+?)(?=^关键词|^Key\s*words|^引言|^Introduction|\Z)",
-        re.M | re.S
+        re.M | re.S,
     ),
     # Abstract: content（匹配到 Keywords 或 Introduction 之前）
     re.compile(
         r"^(Abstract)[：:]\s*(.+?)(?=^Key\s*words|^Introduction|^引言|\Z)",
-        re.I | re.M | re.S
+        re.I | re.M | re.S,
     ),
 ]
 
@@ -69,14 +83,16 @@ class PaperParser:
     1. 加载 PDF 文本
     2. 预处理（清理、合并段落）
     3. 结构解析（识别章节）
-    4. 提取目标章节（摘要、引言、结论）
-    5. 入库向量数据库
+    4. 提取目标章节（摘要、引言、结论等）
+    5. 三阶段切分（结构 → 语义 → 上下文丰富）
+    6. 入库向量数据库
     """
 
     def __init__(self, vector_store: Optional[VectorStore] = None):
         self.preprocessor = PDFPreprocessor()
         self.chunker = StructureChunker(mode="paper")
         self.vector_store = vector_store
+        self.pipeline = SplitterPipeline()
 
     def parse_pdf(
         self,
@@ -126,7 +142,12 @@ class PaperParser:
         meta: Optional[PaperMeta] = None,
         collection_name: str = "papers",
     ) -> dict:
-        """解析 PDF 并存入向量数据库
+        """解析 PDF，三阶段切分后存入向量数据库
+
+        流程：
+        1. parse_pdf 提取 section（Stage 0: 论文结构切分）
+        2. 对每个 section 运行 SplitterPipeline（Stage 1-3: 结构→语义→上下文丰富）
+        3. 切分后的 chunk 入库
 
         Args:
             pdf_path: PDF 文件路径
@@ -139,29 +160,65 @@ class PaperParser:
         if self.vector_store is None:
             self.vector_store = VectorStore(collection_name=collection_name)
 
-        # 解析
+        # Stage 0: 论文结构切分，提取 section
         sections = self.parse_pdf(pdf_path, meta)
 
-        # 转换为 Document
+        if not sections:
+            return {
+                "paper_id": None,
+                "sections_stored": 0,
+                "chunks_stored": 0,
+                "ids": [],
+            }
+
+        # Stage 1-3: 对每个 section 运行三阶段切分管线
         documents = []
         ids = []
 
         for section in sections:
-            doc = Document(
-                page_content=section.content,
-                metadata=section.metadata,
-            )
-            documents.append(doc)
-            ids.append(f"{section.metadata['paper_id']}_{section.section_type}")
+            section_text = section.content
+            section_meta = section.metadata.copy()
+
+            # 运行三阶段切分
+            chunks = self.pipeline.run(section_text)
+
+            if not chunks:
+                # 切分失败，使用原始 section
+                doc = Document(page_content=section_text, metadata=section_meta)
+                documents.append(doc)
+                ids.append(f"{section_meta['paper_id']}_{section_meta['section']}_full")
+            else:
+                for i, chunk in enumerate(chunks):
+                    # 每个 chunk 继承 section 元数据，加上 chunk 序号
+                    chunk_meta = section_meta.copy()
+                    chunk_meta["chunk_index"] = i
+                    chunk_meta["chunk_total"] = len(chunks)
+                    # 上下文丰富信息
+                    if chunk.prev_summary:
+                        chunk_meta["prev_summary"] = chunk.prev_summary
+                    if chunk.next_summary:
+                        chunk_meta["next_summary"] = chunk.next_summary
+                    if chunk.self_contained_score:
+                        chunk_meta["self_contained_score"] = chunk.self_contained_score
+                    if chunk.section_depth:
+                        chunk_meta["section_depth"] = chunk.section_depth
+
+                    doc = Document(page_content=chunk.text, metadata=chunk_meta)
+                    documents.append(doc)
+                    ids.append(
+                        f"{section_meta['paper_id']}_{section_meta['section']}_chunk_{i}"
+                    )
 
         # 入库
         if documents:
             self.vector_store.add_documents(documents, ids=ids)
 
         return {
-            "paper_id": sections[0].metadata.get("paper_id") if sections else None,
-            "sections_stored": len(documents),
+            "paper_id": sections[0].metadata.get("paper_id"),
+            "sections_stored": len(sections),
+            "chunks_stored": len(documents),
             "ids": ids,
+            "documents": documents,
         }
 
     def _extract_metadata(self, text: str, pdf_path: str) -> PaperMeta:
@@ -192,7 +249,10 @@ class PaperParser:
         # 策略：找第一个较长的、不像引用格式的行
         for i, line in enumerate(lines[:15]):
             # 跳过引用格式行
-            if any(kw in line for kw in ["引用格式", "［Ｊ］", "[J]", "doi:", "DOI:", "et al"]):
+            if any(
+                kw in line
+                for kw in ["引用格式", "［Ｊ］", "[J]", "doi:", "DOI:", "et al"]
+            ):
                 continue
             # 跳过机构/单位行（括号开头）
             if line.startswith("（") or line.startswith("("):
@@ -241,14 +301,15 @@ class PaperParser:
 
         # 4. 提取关键词
         keywords_match = re.search(
-            r"(?:关键词|Keywords|Key\s*words)[：:]\s*([^\n]+)",
-            text, re.I
+            r"(?:关键词|Keywords|Key\s*words)[：:]\s*([^\n]+)", text, re.I
         )
         if keywords_match:
             keywords_str = keywords_match.group(1)
             # 分割关键词（支持全角/半角符号）
             keywords = re.split(r"[、，,;；　]", keywords_str)
-            meta.keywords = [k.strip() for k in keywords if k.strip() and len(k.strip()) > 1][:10]
+            meta.keywords = [
+                k.strip() for k in keywords if k.strip() and len(k.strip()) > 1
+            ][:10]
 
         # 5. 提取年份
         # 支持全角和半角数字
@@ -257,7 +318,9 @@ class PaperParser:
         if year_match:
             year_str = year_match.group()
             # 全角转半角
-            year_str = year_str.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+            year_str = year_str.translate(
+                str.maketrans("０１２３４５６７８９", "0123456789")
+            )
             try:
                 meta.year = int(year_str)
             except ValueError:
@@ -281,11 +344,13 @@ class PaperParser:
         text, inline_sections = self._extract_inline_sections(text)
         for section_type, content in inline_sections.items():
             if content:
-                sections.append(PaperSection(
-                    section_type=section_type,
-                    content=content.strip(),
-                    paper_id=paper_id,
-                ))
+                sections.append(
+                    PaperSection(
+                        section_type=section_type,
+                        content=content.strip(),
+                        paper_id=paper_id,
+                    )
+                )
 
         # 2. 按独立标题分割
         section_map = self._split_by_sections(text)
@@ -293,7 +358,9 @@ class PaperParser:
         # 提取目标章节（排除已提取的 abstract）
         for section_type, keywords in TARGET_SECTIONS.items():
             # 跳过已通过内联方式提取的
-            if section_type == "abstract" and any(s.section_type == "abstract" for s in sections):
+            if section_type == "abstract" and any(
+                s.section_type == "abstract" for s in sections
+            ):
                 continue
 
             content = None
@@ -303,11 +370,13 @@ class PaperParser:
                     break
 
             if content:
-                sections.append(PaperSection(
-                    section_type=section_type,
-                    content=content.strip(),
-                    paper_id=paper_id,
-                ))
+                sections.append(
+                    PaperSection(
+                        section_type=section_type,
+                        content=content.strip(),
+                        paper_id=paper_id,
+                    )
+                )
 
         return sections
 
@@ -334,7 +403,7 @@ class PaperParser:
                     sections["abstract"] = content
 
                 # 从文本中移除已提取的部分
-                text = text[:match.start()] + text[match.end():]
+                text = text[: match.start()] + text[match.end() :]
 
         return text, sections
 
@@ -422,6 +491,7 @@ def parse_paper(
 @dataclass
 class PaperValidationResult:
     """论文格式验证结果"""
+
     is_valid: bool
     missing_sections: list[str]
     sections_found: list[str]
@@ -499,7 +569,9 @@ def validate_paper_format(pdf_path: str) -> PaperValidationResult:
     is_valid = "abstract" in sections_found
 
     if is_valid:
-        message = f"论文格式验证通过，共 {page_count} 页，包含: {', '.join(sections_found)}"
+        message = (
+            f"论文格式验证通过，共 {page_count} 页，包含: {', '.join(sections_found)}"
+        )
     else:
         message = f"论文格式验证失败，缺少摘要"
 

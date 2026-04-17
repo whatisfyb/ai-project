@@ -1,12 +1,16 @@
 """Whoosh 全文索引模块 - 支持增量更新的 BM25 检索"""
 
+import warnings
+
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
+
 import jieba
 from pathlib import Path
 from typing import Optional
 
 from langchain_core.documents import Document
 from whoosh.index import create_in, exists_in, open_dir
-from whoosh.fields import Schema, TEXT, ID, STORED
+from whoosh.fields import Schema, TEXT, ID, KEYWORD, NUMERIC, STORED
 from whoosh.qparser import QueryParser
 from whoosh.analysis import Tokenizer, Token
 
@@ -19,8 +23,18 @@ DEFAULT_INDEX_PATH = Path(".data/whoosh_index")
 class JiebaTokenizer(Tokenizer):
     """jieba 分词器"""
 
-    def __call__(self, value, positions=False, chars=False, keeporiginal=False,
-                 removestops=True, start_pos=0, start_char=0, mode='', **kwargs):
+    def __call__(
+        self,
+        value,
+        positions=False,
+        chars=False,
+        keeporiginal=False,
+        removestops=True,
+        start_pos=0,
+        start_char=0,
+        mode="",
+        **kwargs,
+    ):
         for word in jieba.cut(value):
             word = word.strip()
             if word:
@@ -34,10 +48,14 @@ class JiebaTokenizer(Tokenizer):
                 yield token
 
 
-# 索引 schema
 SCHEMA = Schema(
-    doc_id=ID(stored=True, unique=True),  # 文档 ID（唯一）
-    content=TEXT(stored=True, analyzer=JiebaTokenizer()),  # 中文分词
+    doc_id=ID(stored=True, unique=True),
+    content=TEXT(stored=True, analyzer=JiebaTokenizer()),
+    paper_id=ID(stored=True),
+    section=ID(stored=True),
+    authors=TEXT(stored=False, analyzer=JiebaTokenizer()),
+    keywords=KEYWORD(stored=True, commas=True),
+    year=NUMERIC(stored=True, numtype=int),
 )
 
 
@@ -50,18 +68,34 @@ class WhooshIndex:
         self._index = None
 
     def _get_index(self):
-        """获取索引实例"""
+        """获取索引实例，自动处理 schema 迁移"""
         if self._index is not None:
             return self._index
 
-        # Whoosh 需要字符串路径
         index_path_str = str(self.index_path.absolute())
 
         if exists_in(index_path_str):
             self._index = open_dir(index_path_str)
+            if not self._check_schema(self._index):
+                import shutil
+
+                if self.index_path.exists():
+                    for item in self.index_path.iterdir():
+                        if item.is_dir():
+                            shutil.rmtree(item)
+                        else:
+                            item.unlink()
+                self._index = create_in(index_path_str, SCHEMA)
         else:
             self._index = create_in(index_path_str, SCHEMA)
         return self._index
+
+    @staticmethod
+    def _check_schema(index) -> bool:
+        """检查索引 schema 是否包含必需字段"""
+        schema = index.schema
+        required_fields = {"paper_id", "section", "year"}
+        return required_fields.issubset(schema.names())
 
     def add_documents(
         self,
@@ -80,11 +114,27 @@ class WhooshIndex:
         for i, doc in enumerate(documents):
             doc_id = doc_ids[i] if doc_ids else doc.metadata.get("id", f"doc_{i}")
             content = doc.page_content
+            meta = doc.metadata or {}
 
-            # 添加文档（自动覆盖相同 ID）
+            authors_str = meta.get("authors", "")
+            if isinstance(authors_str, list):
+                authors_str = ",".join(authors_str)
+
+            keywords_str = meta.get("keywords", "")
+            if isinstance(keywords_str, list):
+                keywords_str = ",".join(keywords_str)
+
+            year_val = meta.get("year")
+            year_int = int(year_val) if year_val and str(year_val).isdigit() else None
+
             writer.update_document(
                 doc_id=doc_id,
                 content=content,
+                paper_id=meta.get("paper_id", ""),
+                section=meta.get("section", ""),
+                authors=authors_str,
+                keywords=keywords_str,
+                year=year_int,
             )
 
         writer.commit()
@@ -103,16 +153,32 @@ class WhooshIndex:
 
         writer.commit()
 
+    def delete_by_prefix(self, field: str, prefix: str):
+        """按字段前缀删除文档
+
+        Args:
+            field: 字段名
+            prefix: 前缀值
+        """
+        from whoosh.query import Prefix
+
+        index = self._get_index()
+        writer = index.writer()
+        writer.delete_by_query(Prefix(field, prefix))
+        writer.commit()
+
     def search(
         self,
         query: str,
         k: int = 10,
+        filter: Optional[dict] = None,
     ) -> list[tuple[Document, float]]:
         """全文检索
 
         Args:
             query: 查询文本
             k: 返回数量
+            filter: 元数据过滤条件，支持 paper_id, section, authors, keywords, year, year_min, year_max
 
         Returns:
             (Document, score) 元组列表
@@ -120,21 +186,64 @@ class WhooshIndex:
         index = self._get_index()
         searcher = index.searcher()
 
-        # 解析查询
         parser = QueryParser("content", index.schema)
-        q = parser.parse(query)
+        text_query = parser.parse(query)
 
-        # 搜索
-        results = searcher.search(q, limit=k)
+        if filter:
+            from whoosh.query import Term, NumericRange, And as WAnd, Or as WOr
 
-        # 转换结果
+            filter_nodes = []
+            for key, val in filter.items():
+                if key == "paper_id":
+                    filter_nodes.append(Term("paper_id", str(val)))
+                elif key == "section":
+                    filter_nodes.append(Term("section", str(val)))
+                elif key == "authors":
+                    filter_nodes.append(Term("authors", str(val)))
+                elif key == "keywords":
+                    for kw in str(val).split(","):
+                        kw = kw.strip()
+                        if kw:
+                            filter_nodes.append(Term("keywords", kw))
+                elif key == "year":
+                    filter_nodes.append(Term("year", int(val)))
+                elif key == "year_min":
+                    filter_nodes.append(NumericRange("year", int(val), None))
+                elif key == "year_max":
+                    filter_nodes.append(NumericRange("year", None, int(val)))
+
+            if filter_nodes:
+                from whoosh.query import And as WAnd
+
+                combined_filter = WAnd(filter_nodes)
+                from whoosh.search import Searcher
+
+                final_query = (
+                    WAnd([text_query, combined_filter]) if filter_nodes else text_query
+                )
+            else:
+                final_query = text_query
+        else:
+            final_query = text_query
+
+        results = searcher.search(final_query, limit=k)
+
         documents = []
         for hit in results:
+            meta = {"id": hit["doc_id"]}
+            if "paper_id" in hit:
+                meta["paper_id"] = hit["paper_id"]
+            if "section" in hit:
+                meta["section"] = hit["section"]
+            if "keywords" in hit:
+                meta["keywords"] = hit["keywords"]
+            if "year" in hit:
+                meta["year"] = hit["year"]
+
             doc = Document(
                 page_content=hit["content"],
-                metadata={"id": hit["doc_id"]},
+                metadata=meta,
             )
-            # Whoosh 分数归一化到 0-1
             score = hit.score / 10.0 if hit.score else 0.0
             documents.append((doc, score))
 
@@ -150,6 +259,7 @@ class WhooshIndex:
         self._index = None
         # 删除索引目录内容，但保留目录本身
         import shutil
+
         if self.index_path.exists():
             for item in self.index_path.iterdir():
                 if item.is_dir():

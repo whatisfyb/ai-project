@@ -62,6 +62,7 @@ class VectorStore:
         # 生成 IDs
         if ids is None:
             import uuid
+
             ids = [str(uuid.uuid4()) for _ in texts]
 
         # 存储
@@ -166,6 +167,24 @@ class VectorStore:
             ids: 要删除的 ID 列表
         """
         self._collection.delete(ids=ids)
+
+    def delete_by_metadata(self, key: str, value: str) -> int:
+        """按元数据条件删除文档
+
+        Args:
+            key: 元数据键
+            value: 元数据值
+
+        Returns:
+            删除的文档数量
+        """
+        results = self._collection.get(
+            where={key: value},
+            include=["metadatas"],
+        )
+        if results["ids"]:
+            self._collection.delete(ids=results["ids"])
+        return len(results["ids"]) if results["ids"] else 0
 
     def delete_collection(self) -> None:
         """删除整个 collection"""

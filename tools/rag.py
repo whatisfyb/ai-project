@@ -63,11 +63,7 @@ def _merge_multi_query_results(
                 doc_scores[doc_id] = (doc, score)
 
     # 按分数排序
-    sorted_results = sorted(
-        doc_scores.values(),
-        key=lambda x: x[1],
-        reverse=True
-    )
+    sorted_results = sorted(doc_scores.values(), key=lambda x: x[1], reverse=True)
 
     return sorted_results[:top_k]
 
@@ -76,7 +72,18 @@ def _merge_multi_query_results(
 def paper_search(
     query: str,
     top_k: int = 5,
-    section: Optional[Literal["abstract", "introduction", "conclusion"]] = None,
+    section: Optional[
+        Literal[
+            "abstract",
+            "introduction",
+            "conclusion",
+            "method",
+            "results",
+            "discussion",
+            "related_work",
+            "background",
+        ]
+    ] = None,
     author: Optional[str] = None,
     keyword: Optional[str] = None,
     year_min: Optional[int] = None,
@@ -111,6 +118,7 @@ def paper_search(
         queries = [query]
         if expand_query:
             from utils.retrieval.query_rewriter import expand_query as do_expand
+
             queries = do_expand(query, n_expansions=2)
 
         # 构建元数据过滤条件
@@ -140,25 +148,28 @@ def paper_search(
                 filter_dict = {"$and": filter_conditions}
 
         # 执行检索
-        if hybrid and not filter_dict:
-            # 混合检索（不支持元数据过滤）
+        if hybrid:
             searcher = _get_hybrid_searcher()
 
             if len(queries) == 1:
-                # 单查询
-                results = searcher.search(query, k=top_k, use_bm25=True)
+                results = searcher.search(
+                    query, k=top_k, filter=filter_dict, use_bm25=True
+                )
             else:
-                # 多查询：分别检索，融合结果
                 all_results = []
                 for q in queries:
-                    all_results.extend(searcher.search(q, k=top_k * 2, use_bm25=True))
+                    all_results.extend(
+                        searcher.search(
+                            q, k=top_k * 2, filter=filter_dict, use_bm25=True
+                        )
+                    )
 
-                # 按文档 ID 去重融合
                 results = _merge_multi_query_results(all_results, top_k)
         else:
-            # 纯向量检索（支持元数据过滤）
             store = _get_paper_store()
-            results = store.similarity_search_with_score(query, k=top_k, filter=filter_dict)
+            results = store.similarity_search_with_score(
+                query, k=top_k, filter=filter_dict
+            )
 
         # 重排序：候选结果 >= 阈值时触发
         if rerank and len(results) >= RERANK_MIN_CANDIDATES:
@@ -189,17 +200,19 @@ def paper_search(
             else:
                 keywords = []
 
-            formatted_results.append({
-                "paper_id": meta.get("paper_id", "unknown"),
-                "title": meta.get("title", ""),
-                "authors": authors,
-                "keywords": keywords,
-                "year": meta.get("year"),
-                "source": meta.get("source", ""),
-                "section": meta.get("section", ""),
-                "content": doc.page_content,
-                "relevance_score": round(float(score), 4) if score else None,
-            })
+            formatted_results.append(
+                {
+                    "paper_id": meta.get("paper_id", "unknown"),
+                    "title": meta.get("title", ""),
+                    "authors": authors,
+                    "keywords": keywords,
+                    "year": meta.get("year"),
+                    "source": meta.get("source", ""),
+                    "section": meta.get("section", ""),
+                    "content": doc.page_content,
+                    "relevance_score": round(float(score), 4) if score else None,
+                }
+            )
 
         return {
             "success": True,
@@ -293,21 +306,27 @@ def paper_list(
         # 应用过滤
         if author:
             paper_list = [
-                p for p in paper_list
+                p
+                for p in paper_list
                 if any(author.lower() in a.lower() for a in p.get("authors", []))
             ]
 
         if keyword:
             paper_list = [
-                p for p in paper_list
+                p
+                for p in paper_list
                 if any(keyword.lower() in k.lower() for k in p.get("keywords", []))
             ]
 
         if year_min is not None:
-            paper_list = [p for p in paper_list if p.get("year") and p["year"] >= year_min]
+            paper_list = [
+                p for p in paper_list if p.get("year") and p["year"] >= year_min
+            ]
 
         if year_max is not None:
-            paper_list = [p for p in paper_list if p.get("year") and p["year"] <= year_max]
+            paper_list = [
+                p for p in paper_list if p.get("year") and p["year"] <= year_max
+            ]
 
         # 限制数量
         paper_list = paper_list[:limit]
@@ -411,7 +430,10 @@ from pathlib import Path
 
 from store.ingest_task import IngestTaskStore, IngestTask
 from utils.document.paper_parser import (
-    PaperParser, PaperMeta, validate_paper_format, validate_and_parse
+    PaperParser,
+    PaperMeta,
+    validate_paper_format,
+    validate_and_parse,
 )
 
 
@@ -450,97 +472,91 @@ def _run_ingest_task(
     ingest_store.update_task(task)
 
     parser = PaperParser(store)
+    whoosh_index = get_whoosh_index()
 
     try:
         for pdf_path in pdf_paths:
-            # 检查中断
             task = ingest_store.get_task(task_id)
             if task.status == "interrupted":
                 break
 
-            # 检查是否已入库（根据文件路径去重）
-            existing = store.similarity_search("", k=1000)
-            file_exists = any(
-                pdf_path in (doc.metadata.get("file_path", "") or "")
-                for doc in existing
-            )
-
-            if file_exists:
-                ingest_store.add_paper_result(
-                    task_id, task,
-                    file_path=pdf_path,
-                    success=False,
-                    error="论文已在知识库中（路径重复）",
-                )
-                continue
-
-            # 验证论文格式
             validation = validate_paper_format(pdf_path)
 
             if not validation.is_valid:
                 ingest_store.add_paper_result(
-                    task_id, task,
+                    task_id,
+                    task,
                     file_path=pdf_path,
                     success=False,
                     error=validation.message,
                 )
                 continue
 
-            # 解析并入库
             paper_id = _generate_paper_id(pdf_path)
 
             try:
-                # 不传 meta，让 parse_pdf 自动提取元数据
-                sections = parser.parse_pdf(pdf_path)
+                from utils.document.paper_parser import PaperMeta
 
-                # 更新 paper_id（自动生成的可能不准确）
-                for section in sections:
-                    section.metadata["paper_id"] = paper_id
+                meta = PaperMeta(paper_id=paper_id, source="local")
 
-                if not sections:
+                store.delete_by_metadata("paper_id", paper_id)
+                whoosh_index.delete_by_prefix("paper_id", paper_id)
+
+                result = parser.parse_and_store(
+                    pdf_path,
+                    meta=meta,
+                    collection_name=store.collection_name,
+                )
+
+                if not result["chunks_stored"]:
                     ingest_store.add_paper_result(
-                        task_id, task,
+                        task_id,
+                        task,
                         file_path=pdf_path,
                         success=False,
                         error="无法提取论文内容",
                     )
                     continue
 
-                # 入库
-                documents = []
-                ids = []
-                for section in sections:
-                    from langchain_core.documents import Document
-                    section.metadata["file_path"] = pdf_path
-                    documents.append(Document(
-                        page_content=section.content,
-                        metadata=section.metadata,
-                    ))
-                    ids.append(f"{paper_id}_{section.section_type}")
+                documents = result["documents"]
+                ids = result["ids"]
 
-                store.add_documents(documents, ids=ids)
+                for doc in documents:
+                    doc.metadata["file_path"] = pdf_path
 
-                # 获取标题
-                title = sections[0].metadata.get("title", Path(pdf_path).stem)
+                whoosh_index.add_documents(documents, ids)
+
+                title = ""
+                if documents:
+                    title = documents[0].metadata.get("title", Path(pdf_path).stem)
+
+                sections_found = list(
+                    set(
+                        doc.metadata.get("section", "")
+                        for doc in documents
+                        if doc.metadata.get("section")
+                    )
+                )
 
                 ingest_store.add_paper_result(
-                    task_id, task,
+                    task_id,
+                    task,
                     file_path=pdf_path,
                     success=True,
                     paper_id=paper_id,
                     title=title,
-                    sections=[s.section_type for s in sections],
+                    sections=sections_found,
                 )
 
             except Exception as e:
                 ingest_store.add_paper_result(
-                    task_id, task,
+                    task_id,
+                    task,
                     file_path=pdf_path,
                     success=False,
                     error=str(e),
                 )
 
-        # 标记完成
         task = ingest_store.get_task(task_id)
         if task.status != "interrupted":
             task.status = "completed"
