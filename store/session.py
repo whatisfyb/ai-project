@@ -62,7 +62,9 @@ class SessionStore:
 
             # 添加 total_tokens 列（如果不存在）
             try:
-                conn.execute("ALTER TABLE session_metadata ADD COLUMN total_tokens INTEGER DEFAULT 0")
+                conn.execute(
+                    "ALTER TABLE session_metadata ADD COLUMN total_tokens INTEGER DEFAULT 0"
+                )
             except sqlite3.OperationalError:
                 pass  # 列已存在
 
@@ -82,7 +84,7 @@ class SessionStore:
                 INSERT OR IGNORE INTO session_metadata (session_id, title, created_at, updated_at, message_count, total_tokens)
                 VALUES (?, ?, ?, ?, 0, 0)
                 """,
-                (session_id, title, now, now)
+                (session_id, title, now, now),
             )
             conn.commit()
 
@@ -103,7 +105,7 @@ class SessionStore:
                 SELECT session_id, title, created_at, updated_at, message_count, total_tokens
                 FROM session_metadata WHERE session_id = ?
                 """,
-                (session_id,)
+                (session_id,),
             )
             row = cursor.fetchone()
             if row:
@@ -127,18 +129,20 @@ class SessionStore:
                 ORDER BY updated_at DESC
                 LIMIT ?
                 """,
-                (limit,)
+                (limit,),
             )
             sessions = []
             for row in cursor.fetchall():
-                sessions.append({
-                    "session_id": row[0],
-                    "title": row[1],
-                    "created_at": row[2],
-                    "updated_at": row[3],
-                    "message_count": row[4],
-                    "total_tokens": row[5] if row[5] is not None else 0,
-                })
+                sessions.append(
+                    {
+                        "session_id": row[0],
+                        "title": row[1],
+                        "created_at": row[2],
+                        "updated_at": row[3],
+                        "message_count": row[4],
+                        "total_tokens": row[5] if row[5] is not None else 0,
+                    }
+                )
             return sessions
 
     def update_session_title(self, session_id: str, title: str) -> bool:
@@ -150,7 +154,7 @@ class SessionStore:
                 UPDATE session_metadata SET title = ?, updated_at = ?
                 WHERE session_id = ?
                 """,
-                (title, now, session_id)
+                (title, now, session_id),
             )
             conn.commit()
         return True
@@ -159,7 +163,9 @@ class SessionStore:
         """删除会话及其所有消息"""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
-            conn.execute("DELETE FROM session_metadata WHERE session_id = ?", (session_id,))
+            conn.execute(
+                "DELETE FROM session_metadata WHERE session_id = ?", (session_id,)
+            )
             conn.commit()
         return True
 
@@ -180,7 +186,7 @@ class SessionStore:
                 UPDATE session_metadata SET total_tokens = ?, updated_at = ?
                 WHERE session_id = ?
                 """,
-                (total_tokens, now, session_id)
+                (total_tokens, now, session_id),
             )
             conn.commit()
         return True
@@ -203,14 +209,14 @@ class SessionStore:
                     updated_at = ?
                 WHERE session_id = ?
                 """,
-                (tokens, datetime.now().isoformat(), session_id)
+                (tokens, datetime.now().isoformat(), session_id),
             )
             conn.commit()
 
             # 获取更新后的值
             cursor = conn.execute(
                 "SELECT total_tokens FROM session_metadata WHERE session_id = ?",
-                (session_id,)
+                (session_id,),
             )
             row = cursor.fetchone()
             return row[0] if row else 0
@@ -234,7 +240,7 @@ class SessionStore:
                 INSERT INTO messages (session_id, role, content, timestamp, metadata)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (session_id, role, content, now, metadata_json)
+                (session_id, role, content, now, metadata_json),
             )
             message_id = cursor.lastrowid
 
@@ -245,7 +251,7 @@ class SessionStore:
                 SET message_count = message_count + 1, updated_at = ?
                 WHERE session_id = ?
                 """,
-                (now, session_id)
+                (now, session_id),
             )
 
             conn.commit()
@@ -259,12 +265,13 @@ class SessionStore:
     ) -> int:
         """批量添加消息（从 LangGraph messages 同步）
 
-        支持保存完整的工具调用上下文：
+        支持保存完整的消息类型：
         - user: HumanMessage
         - assistant: AIMessage（可能包含 tool_calls）
         - tool: ToolMessage（工具返回结果）
+        - system: SystemMessage
         """
-        from langchain_core.messages import ToolMessage
+        from langchain_core.messages import ToolMessage, SystemMessage
 
         now = datetime.now().isoformat()
         count = 0
@@ -272,7 +279,9 @@ class SessionStore:
         with sqlite3.connect(self.db_path) as conn:
             for msg in messages:
                 # 确定角色
-                if isinstance(msg, HumanMessage):
+                if isinstance(msg, SystemMessage):
+                    role = "system"
+                elif isinstance(msg, HumanMessage):
                     role = "user"
                 elif isinstance(msg, ToolMessage):
                     role = "tool"
@@ -307,7 +316,7 @@ class SessionStore:
                     INSERT INTO messages (session_id, role, content, timestamp, metadata)
                     VALUES (?, ?, ?, ?, ?)
                     """,
-                    (session_id, role, content, now, metadata_json)
+                    (session_id, role, content, now, metadata_json),
                 )
                 count += 1
 
@@ -319,7 +328,7 @@ class SessionStore:
                     SET message_count = message_count + ?, updated_at = ?
                     WHERE session_id = ?
                     """,
-                    (count, now, session_id)
+                    (count, now, session_id),
                 )
 
             conn.commit()
@@ -345,13 +354,15 @@ class SessionStore:
             cursor = conn.execute(sql, (session_id,))
             messages = []
             for row in cursor.fetchall():
-                messages.append({
-                    "id": row[0],
-                    "role": row[1],
-                    "content": row[2],
-                    "timestamp": row[3],
-                    "metadata": json.loads(row[4]) if row[4] else None,
-                })
+                messages.append(
+                    {
+                        "id": row[0],
+                        "role": row[1],
+                        "content": row[2],
+                        "timestamp": row[3],
+                        "metadata": json.loads(row[4]) if row[4] else None,
+                    }
+                )
             return messages
 
     def get_last_n_messages(
@@ -369,17 +380,19 @@ class SessionStore:
                 ORDER BY timestamp DESC
                 LIMIT ?
                 """,
-                (session_id, n)
+                (session_id, n),
             )
             messages = []
             for row in reversed(cursor.fetchall()):  # 反转顺序
-                messages.append({
-                    "id": row[0],
-                    "role": row[1],
-                    "content": row[2],
-                    "timestamp": row[3],
-                    "metadata": json.loads(row[4]) if row[4] else None,
-                })
+                messages.append(
+                    {
+                        "id": row[0],
+                        "role": row[1],
+                        "content": row[2],
+                        "timestamp": row[3],
+                        "metadata": json.loads(row[4]) if row[4] else None,
+                    }
+                )
             return messages
 
     def clear_messages(self, session_id: str) -> bool:
@@ -393,10 +406,76 @@ class SessionStore:
                 SET message_count = 0, updated_at = ?
                 WHERE session_id = ?
                 """,
-                (now, session_id)
+                (now, session_id),
             )
             conn.commit()
         return True
+
+    def replace_messages(self, session_id: str, messages: list[BaseMessage]) -> int:
+        """原子替换会话消息（清空 + 写入在同一个事务中）
+
+        避免 clear + add 两步操作之间被读到空数据。
+        """
+        from langchain_core.messages import ToolMessage, SystemMessage
+
+        now = datetime.now().isoformat()
+
+        with sqlite3.connect(self.db_path) as conn:
+            # 1. 清空旧消息
+            conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+
+            # 2. 写入新消息
+            count = 0
+            for msg in messages:
+                if isinstance(msg, SystemMessage):
+                    role = "system"
+                elif isinstance(msg, HumanMessage):
+                    role = "user"
+                elif isinstance(msg, ToolMessage):
+                    role = "tool"
+                else:
+                    role = "assistant"
+
+                content = msg.content or ""
+
+                metadata = {}
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    metadata["tool_calls"] = [
+                        {
+                            "id": tc.get("id"),
+                            "name": tc.get("name"),
+                            "args": tc.get("args"),
+                        }
+                        for tc in msg.tool_calls
+                    ]
+                if isinstance(msg, ToolMessage):
+                    metadata["tool_call_id"] = msg.tool_call_id
+                    metadata["name"] = msg.name
+
+                metadata_json = json.dumps(metadata) if metadata else None
+
+                conn.execute(
+                    """
+                    INSERT INTO messages (session_id, role, content, timestamp, metadata)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (session_id, role, content, now, metadata_json),
+                )
+                count += 1
+
+            # 3. 更新会话统计
+            conn.execute(
+                """
+                UPDATE session_metadata
+                SET message_count = ?, updated_at = ?
+                WHERE session_id = ?
+                """,
+                (count, now, session_id),
+            )
+
+            conn.commit()
+
+        return count
 
     # ============ 工具方法 ============
 
@@ -439,7 +518,9 @@ class SessionStore:
             if include_metadata and msg.get("metadata"):
                 metadata = msg["metadata"]
                 if "tool_calls" in metadata:
-                    tools = [tc["name"] for tc in metadata["tool_calls"] if tc.get("name")]
+                    tools = [
+                        tc["name"] for tc in metadata["tool_calls"] if tc.get("name")
+                    ]
                     if tools:
                         line += f" [工具: {', '.join(tools)}]"
 

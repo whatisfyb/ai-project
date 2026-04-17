@@ -381,12 +381,30 @@ class MainAgentTUI(App):
             if new_thread_id:
                 self.thread_id = new_thread_id
                 self._command_handler.update_thread_id(new_thread_id)
-                # 重新加载目标会话的历史消息
+                # 完全切换会话：重建 state、加载历史、重新加载记忆
+                await self.agent.switch_session(new_thread_id)
+                # 清空聊天窗口，显示最近几条历史
+                self._clear_chat()
                 history = self.session_store.get_messages(new_thread_id)
                 if history:
-                    self.agent._current_state["messages"] = self.agent._restore_messages(history)
-                else:
-                    self.agent._current_state["messages"] = []
+                    session = self.session_store.get_session(new_thread_id)
+                    title = (
+                        session.get("title", new_thread_id)
+                        if session
+                        else new_thread_id
+                    )
+                    self._append_chat(
+                        f"--- 切换到会话: {title} ({len(history)} 条消息) ---"
+                    )
+                    for msg in history[-6:]:
+                        role = msg["role"]
+                        content = msg.get("content") or ""
+                        if role in ("user", "system"):
+                            self._append_chat(f"  用户: {content}")
+                        elif role == "tool":
+                            self._append_chat(f"  工具: {content}")
+                        else:
+                            self._append_chat(f"  助手: {content}")
                 self._update_status()
 
         except Exception as e:

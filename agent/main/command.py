@@ -3,6 +3,7 @@
 为 TUI 提供命令执行逻辑，直接操作 TUI 组件。
 """
 
+from pyexpat.errors import messages
 import time
 from typing import TYPE_CHECKING
 
@@ -69,6 +70,7 @@ class CommandHandler:
     def cmd_status(self, args: str) -> dict:
         """查看运行状态"""
         from agent.core.registry import agent_registry
+
         running = agent_registry.is_running()
         plan_ids = agent_registry.get_running_plan_ids()
         if running:
@@ -105,13 +107,15 @@ class CommandHandler:
         lines = ["历史会话:"]
         for s in sessions:
             try:
-                dt = __import__('datetime').datetime.fromisoformat(s['updated_at'])
-                time_str = dt.strftime('%m-%d %H:%M')
+                dt = __import__("datetime").datetime.fromisoformat(s["updated_at"])
+                time_str = dt.strftime("%m-%d %H:%M")
             except:
-                time_str = s['updated_at'][:16]
+                time_str = s["updated_at"][:16]
 
-            is_current = " *" if s['session_id'] == self.thread_id else ""
-            lines.append(f"  {s['session_id']}{is_current} - {s['title'][:30]} ({s['message_count']}条, {time_str})")
+            is_current = " *" if s["session_id"] == self.thread_id else ""
+            lines.append(
+                f"  {s['session_id']}{is_current} - {s['title'][:30]} ({s['message_count']}条, {time_str})"
+            )
 
         lines.append("\n使用 /resume <session_id> 切换会话")
         self._append("\n".join(lines))
@@ -135,11 +139,13 @@ class CommandHandler:
             self._append(f"\n会话: {session['title']}")
             self._append(f"历史消息 ({len(messages)} 条):")
             for msg in messages[:10]:
-                role = msg['role']
-                content = (msg.get('content') or "")[:100]
-                if role == 'user':
+                role = msg["role"]
+                content = msg.get("content") or ""
+                if role in ("user", "system"):
                     self._append(f"  用户: {content}")
-                elif role == 'assistant':
+                elif role == "tool":
+                    self._append(f"  工具: {content}")
+                else:
                     self._append(f"  助手: {content}")
         else:
             self._append(f"已切换到会话: {session['title']} (无历史消息)")
@@ -164,18 +170,18 @@ class CommandHandler:
             content = msg.get('content') or ""
             metadata = msg.get('metadata') or {}
 
-            if role == 'user':
-                self._append(f"  用户: {content[:200]}")
+            if role == 'user' or role == 'system':
+                self._append(f"  用户: {content}")
             elif role == 'tool':
                 tool_name = metadata.get('name', 'tool')
-                self._append(f"  工具[{tool_name}]: {content[:100]}")
+                self._append(f"  工具[{tool_name}]: {content}")
             else:
                 tool_calls = metadata.get('tool_calls')
                 if tool_calls:
                     tool_names = [tc.get('name', '?') for tc in tool_calls]
-                    self._append(f"  助手[调用: {', '.join(tool_names)}]: {content[:100]}")
+                    self._append(f"  助手[调用: {', '.join(tool_names)}]: {content}")
                 else:
-                    self._append(f"  助手: {content[:200]}")
+                    self._append(f"  助手: {content}")
 
         return {}
 
@@ -196,19 +202,23 @@ class CommandHandler:
                 self._append(f"✓ 压缩完成")
                 self._append(f"  - 移除消息: {result['messages_removed']} 条")
                 self._append(f"  - 保留消息: {result['messages_kept']} 条")
-                self._append(f"  - Token: {result['tokens_before']:,} → {result['tokens_after']:,} (节省 {saved:,})")
+                self._append(
+                    f"  - Token: {result['tokens_before']:,} → {result['tokens_after']:,} (节省 {saved:,})"
+                )
 
                 # 显示微压缩统计
                 micro = result.get("micro_compact")
                 if micro and micro.get("tools_cleared", 0) > 0:
-                    self._append(f"  - 微压缩: 清理 {micro['tools_cleared']} 个旧工具结果, 节省 {micro['tokens_saved']:,} tokens")
+                    self._append(
+                        f"  - 微压缩: 清理 {micro['tools_cleared']} 个旧工具结果, 节省 {micro['tokens_saved']:,} tokens"
+                    )
 
                 summary = result.get("summary", "")
                 if summary and len(summary) > 100:
                     summary = summary[:100] + "..."
                     self._append(f"\n摘要预览: {summary}")
             else:
-                self._append(result.get('message', '压缩失败'))
+                self._append(result.get("message", "压缩失败"))
         except Exception as e:
             self._append(f"压缩失败: {e}")
 
@@ -246,6 +256,7 @@ async def execute_tui_command(cmd: str, handler: CommandHandler) -> dict:
         return {"error": f"命令未实现: {cmd_name}"}
 
     import asyncio
+
     result = method(args)
     if asyncio.iscoroutine(result):
         result = await result

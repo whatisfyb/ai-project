@@ -245,18 +245,16 @@ class MainAgent(BaseAgent):
         return await check_token_node(state, self.context_window)
 
     async def _sync_state_node(self, state: MainAgentState) -> dict:
-        """同步状态到 SessionStore（全量替换）
+        """同步状态到 SessionStore（原子替换）
 
-        每次同步都清空旧消息，写入当前全量 messages。
-        压缩后 state["messages"] 已经是短列表，全量替换也是正确的。
+        清空 + 写入在同一个事务中完成，避免中间状态被读到。
         """
         thread_id = state.get("thread_id", "default")
         messages = state.get("messages", [])
         if not messages:
             return {}
 
-        self.session_store.clear_messages(thread_id)
-        self.session_store.add_messages_batch(thread_id, messages)
+        self.session_store.replace_messages(thread_id, messages)
 
         return {}
 
@@ -270,15 +268,10 @@ class MainAgent(BaseAgent):
         """
         self._running = True
         self._loop = asyncio.get_running_loop()
-        first_trigger = True
+        self._first_trigger = True
 
         # 初始化 state（包括恢复历史消息）
-        self._current_state = self._make_initial_state(thread_id)
-
-        # 恢复历史消息
-        history = self.session_store.get_messages(thread_id)
-        if history:
-            self._current_state["messages"] = self._restore_messages(history)
+        self._init_state(thread_id)
 
         # 注册 inbox 监听
         self._register_inbox_listener()
@@ -291,11 +284,11 @@ class MainAgent(BaseAgent):
                 break
 
             # 2. 首次触发走 start_section
-            if first_trigger:
+            if self._first_trigger:
                 self._current_state = await self.start_section.ainvoke(
                     self._current_state
                 )
-                first_trigger = False
+                self._first_trigger = False
 
             # 3. 注入事件到 state
             self._inject_event(event)
@@ -317,7 +310,7 @@ class MainAgent(BaseAgent):
                 else:
                     break
 
-            # 5. finish_section（token 计量、压缩等）
+            # 5. finish_section（最终同步）
             self._current_state = await self.finish_section.ainvoke(self._current_state)
 
             # 6. 通知完成
@@ -325,6 +318,22 @@ class MainAgent(BaseAgent):
                 event.on_complete.set()
 
         self._running = False
+
+    def _init_state(self, thread_id: str) -> None:
+        """初始化或重置 state，加载历史消息"""
+        self._current_state = self._make_initial_state(thread_id)
+
+        history = self.session_store.get_messages(thread_id)
+        if history:
+            self._current_state["messages"] = self._restore_messages(history)
+
+    async def switch_session(self, thread_id: str) -> None:
+        """切换到指定会话（等同于加载 checkpoint）
+
+        完全替换 state、重新加载历史消息、重新加载长期记忆。
+        """
+        self._init_state(thread_id)
+        self._first_trigger = True
 
     def _make_initial_state(self, thread_id: str) -> MainAgentState:
         """创建初始状态"""
@@ -546,7 +555,15 @@ class MainAgent(BaseAgent):
         }
 
     def _restore_messages(self, history: list[dict]) -> list:
-        """从 session_store 恢复 LangChain 消息对象"""
+        """从 session_store 恢复 LangChain 消息对象
+
+        序列化/反序列化与 /history 和 add_messages_batch 保持一致：
+        - role=user → HumanMessage（Inbox 通知也是 HumanMessage）
+        - role=system → HumanMessage（Inbox 通知在旧版可能存为 system，统一恢复为 HumanMessage）
+        - role=tool → ToolMessage
+        - role=assistant（有 tool_calls）→ AIMessage with tool_calls
+        - role=assistant → AIMessage
+        """
         from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
         result = []
@@ -555,7 +572,8 @@ class MainAgent(BaseAgent):
             role = h["role"]
             content = h["content"] or ""
 
-            if role == "user":
+            if role == "user" or role == "system":
+                # system 角色统一恢复为 HumanMessage（Inbox 通知等）
                 result.append(HumanMessage(content=content))
             elif role == "tool":
                 tool_call_id = metadata.get("tool_call_id")
