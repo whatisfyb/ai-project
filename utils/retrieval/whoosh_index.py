@@ -74,21 +74,66 @@ class WhooshIndex:
 
         index_path_str = str(self.index_path.absolute())
 
-        if exists_in(index_path_str):
-            self._index = open_dir(index_path_str)
-            if not self._check_schema(self._index):
-                import shutil
+        try:
+            index_exists = exists_in(index_path_str)
+        except (ModuleNotFoundError, ImportError):
+            # 旧索引 pickle 反序列化失败，重建索引
+            self._rebuild_index(index_path_str)
+            return self._index
 
-                if self.index_path.exists():
-                    for item in self.index_path.iterdir():
-                        if item.is_dir():
-                            shutil.rmtree(item)
-                        else:
-                            item.unlink()
-                self._index = create_in(index_path_str, SCHEMA)
+        if index_exists:
+            try:
+                self._index = open_dir(index_path_str)
+            except (ModuleNotFoundError, ImportError):
+                # 模块路径变更导致 pickle 反序列化失败，重建索引
+                self._rebuild_index(index_path_str)
+                return self._index
+
+            if not self._check_schema(self._index):
+                self._rebuild_index(index_path_str)
+                return self._index
         else:
             self._index = create_in(index_path_str, SCHEMA)
         return self._index
+
+    def _rebuild_index(self, index_path_str: str):
+        """清除旧索引并重建"""
+        import shutil
+        import gc
+        import tempfile
+        import os
+
+        # 释放可能持有的索引句柄
+        self._index = None
+        gc.collect()
+
+        # 在临时位置创建新索引
+        temp_dir = tempfile.mkdtemp(prefix="whoosh_")
+        try:
+            self._index = create_in(temp_dir, SCHEMA)
+            # 尝试替换旧索引目录
+            if self.index_path.exists():
+                try:
+                    shutil.rmtree(self.index_path)
+                except PermissionError:
+                    # Windows 文件锁定，尝试重命名旧目录
+                    try:
+                        import time
+                        backup_path = self.index_path.with_suffix(f".old_{int(time.time())}")
+                        self.index_path.rename(backup_path)
+                    except (PermissionError, OSError):
+                        # 无法删除或重命名，使用临时路径作为新索引路径
+                        self.index_path = Path(temp_dir)
+                        self._index = create_in(temp_dir, SCHEMA)
+                        return
+            # 移动新索引到目标位置
+            shutil.move(temp_dir, str(self.index_path))
+            self._index = create_in(index_path_str, SCHEMA)
+        except Exception:
+            # 清理临时目录
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            raise
 
     @staticmethod
     def _check_schema(index) -> bool:
