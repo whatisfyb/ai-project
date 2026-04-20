@@ -266,12 +266,20 @@ class MCPServerConfig:
         enabled: bool = True,
         timeout: int = 30,
         headers: dict | None = None,
+        # stdio specific
+        command: list[str] | None = None,
+        env: dict[str, str] | None = None,
+        cwd: str | None = None,
     ):
         self.transport = transport
         self.url = url
         self.enabled = enabled
         self.timeout = timeout
         self.headers = headers
+        # stdio specific
+        self.command = command or []
+        self.env = env or {}
+        self.cwd = cwd
 
 
 class MCPConfig:
@@ -293,6 +301,10 @@ class MCPConfig:
                     enabled=cfg.get("enabled", True),
                     timeout=cfg.get("timeout", 30),
                     headers=cfg.get("headers"),
+                    # stdio specific
+                    command=cfg.get("command"),
+                    env=cfg.get("env"),
+                    cwd=cfg.get("cwd"),
                 )
 
     @property

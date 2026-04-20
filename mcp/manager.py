@@ -74,6 +74,10 @@ class MCPManager:
             url=config.get("url", ""),
             timeout=config.get("timeout", 30),
             headers=config.get("headers"),
+            # stdio specific
+            command=config.get("command"),
+            env=config.get("env"),
+            cwd=config.get("cwd"),
         )
 
         try:
