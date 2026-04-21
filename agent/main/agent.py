@@ -23,7 +23,7 @@ from agent.main.tools import get_main_agent_tools
 from agent.main.prompts import MAIN_AGENT_PROMPT
 from agent.middleware.long_term_memory import load_memory_node, memory_check_node
 from agent.middleware.token_count import token_count_node
-from agent.middleware.context_compact import check_token_node
+from agent.middleware.context_compact import check_token_node, micro_compact_node
 from store.session import SessionStore
 
 
@@ -166,18 +166,20 @@ class MainAgent(BaseAgent):
     def _build_tools_section(self) -> StateGraph:
         """构建 tools_section 子图
 
-        tools → token_count → check_token → sync_state → END
+        tools → micro_compact → token_count → check_token → sync_state → END
         """
         from langgraph.graph import StateGraph as SubStateGraph
 
         graph = SubStateGraph(MainAgentState)
         graph.add_node("tools", self._tools_node)
+        graph.add_node("micro_compact", micro_compact_node)
         graph.add_node("token_count", token_count_node)
         graph.add_node("check_token", self._check_token_node_wrapper)
         graph.add_node("sync_state", self._sync_state_node)
 
         graph.add_edge(START, "tools")
-        graph.add_edge("tools", "token_count")
+        graph.add_edge("tools", "micro_compact")
+        graph.add_edge("micro_compact", "token_count")
         graph.add_edge("token_count", "check_token")
         graph.add_edge("check_token", "sync_state")
         graph.add_edge("sync_state", END)

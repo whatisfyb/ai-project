@@ -163,7 +163,7 @@ def should_auto_compact(total_tokens: int, context_window: int) -> bool:
 
 
 async def compact_session(thread_id: str, context_window: int) -> dict:
-    """压缩会话上下文
+    """压缩会话上下文（仅摘要压缩，微压缩已移至 tool section 独立节点）
 
     Args:
         thread_id: 会话 ID
@@ -183,8 +183,6 @@ async def compact_session(thread_id: str, context_window: int) -> dict:
     compact_settings = settings.compact
 
     keep_recent = compact_settings.keep_recent
-    micro_enabled = compact_settings.micro_compact_enabled
-    micro_keep = compact_settings.micro_compact_keep_recent
     use_token_budget = compact_settings.use_token_budget
     tail_budget_ratio = compact_settings.tail_budget_ratio
 
@@ -218,14 +216,12 @@ async def compact_session(thread_id: str, context_window: int) -> dict:
                 "tokens_after": count_messages_tokens(messages),
             }
 
-    # 执行压缩
+    # 执行摘要压缩（不再包含微压缩）
     llm = get_llm_model()
     result = await compact_messages(
         messages,
         keep_recent,
         llm,
-        enable_micro_compact=micro_enabled,
-        micro_compact_keep_recent=micro_keep,
         use_token_budget=use_token_budget,
         token_budget=token_budget if use_token_budget else None,
     )
@@ -277,7 +273,6 @@ async def compact_session(thread_id: str, context_window: int) -> dict:
         "messages_removed": result["messages_removed"],
         "messages_kept": result.get("messages_kept", len(compacted)),
         "compacted_messages": compacted,
-        "micro_compact": result.get("micro_compact"),
         "split_mode": result.get("split_mode"),
     }
 
@@ -348,3 +343,91 @@ async def check_token_node(state: MainAgentState, context_window: int) -> dict:
         return {"messages": compacted_messages}
 
     return {}
+
+
+async def micro_compact_node(state: MainAgentState) -> dict:
+    """微压缩节点 - 清理旧的工具结果
+
+    在每次工具调用后执行，压缩旧工具结果以节省上下文空间。
+    微压缩不调用 LLM，是纯规则操作，零延迟零成本。
+
+    流程:
+    1. 将 state 中的 LangChain 消息转换为 dict 格式
+    2. 执行微压缩（清理旧工具结果为一行摘要）
+    3. 如有变更，更新 SessionStore 并返回压缩后的消息
+    4. 如无变更，返回空字典
+    """
+    from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
+    from utils.context.micro_compact import micro_compact_messages
+    from utils.context.token_counter import count_messages_tokens
+    from store.session import SessionStore
+
+    messages = state.get("messages", [])
+    if not messages:
+        return {}
+
+    settings = get_settings_instance()
+    compact_settings = settings.compact
+
+    if not compact_settings.micro_compact_enabled:
+        return {}
+
+    keep_recent = compact_settings.micro_compact_keep_recent
+
+    # LangChain 消息 → dict 格式
+    dict_messages = []
+    for msg in messages:
+        if isinstance(msg, HumanMessage):
+            dict_messages.append({"role": "user", "content": msg.content, "metadata": {}})
+        elif isinstance(msg, AIMessage):
+            metadata = {}
+            if hasattr(msg, "tool_calls") and msg.tool_calls:
+                metadata["tool_calls"] = msg.tool_calls
+            dict_messages.append({"role": "assistant", "content": msg.content, "metadata": metadata})
+        elif isinstance(msg, ToolMessage):
+            dict_messages.append({
+                "role": "tool",
+                "content": msg.content,
+                "metadata": {"tool_call_id": msg.tool_call_id, "name": msg.name or ""},
+            })
+        elif isinstance(msg, SystemMessage):
+            dict_messages.append({"role": "system", "content": msg.content, "metadata": {}})
+        else:
+            dict_messages.append({"role": "user", "content": str(msg.content), "metadata": {}})
+
+    # 执行微压缩
+    result = micro_compact_messages(dict_messages, keep_recent=keep_recent)
+
+    if result["tools_cleared"] == 0:
+        return {}
+
+    # dict 格式 → LangChain 消息
+    compacted_lc = []
+    for msg in result["messages"]:
+        role = msg.get("role")
+        content = msg.get("content", "")
+        metadata = msg.get("metadata") or {}
+
+        if role == "user" or role == "system":
+            compacted_lc.append(HumanMessage(content=content))
+        elif role == "assistant":
+            tool_calls = metadata.get("tool_calls")
+            if tool_calls:
+                compacted_lc.append(AIMessage(content=content, tool_calls=tool_calls))
+            else:
+                compacted_lc.append(AIMessage(content=content))
+        elif role == "tool":
+            tool_call_id = metadata.get("tool_call_id")
+            tool_name = metadata.get("name")
+            if tool_call_id:
+                compacted_lc.append(ToolMessage(content=content, tool_call_id=tool_call_id, name=tool_name))
+
+    # 更新 SessionStore
+    thread_id = state.get("thread_id", "default")
+    if thread_id:
+        session_store = SessionStore()
+        session_store.replace_messages(thread_id, result["messages"])
+        total_tokens = count_messages_tokens(result["messages"])
+        session_store.update_session_tokens(thread_id, total_tokens)
+
+    return {"messages": compacted_lc}

@@ -229,7 +229,7 @@ class CompactSettings:
     def micro_compact_keep_recent(self) -> int:
         """微压缩保留最近 N 个工具结果"""
         micro_config = self._data.get("micro_compact", {})
-        return micro_config.get("keep_recent", 5)
+        return micro_config.get("keep_recent", 10)
 
     @property
     def circuit_breaker_enabled(self) -> bool:

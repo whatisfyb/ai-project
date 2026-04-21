@@ -375,27 +375,23 @@ async def compact_messages(
     messages: list[dict],
     keep_recent: int = 10,
     llm=None,
-    enable_micro_compact: bool = True,
-    micro_compact_keep_recent: int = 5,
     use_token_budget: bool = True,
     token_budget: int | None = None,
 ) -> dict[str, Any]:
-    """压缩消息列表
+    """压缩消息列表（仅摘要压缩，微压缩已移至 tool section 独立节点）
 
     压缩流程：
-    1. 微压缩：清理旧的工具结果（可选）
-    2. 摘要压缩：生成对话摘要
+    1. 分割消息（基于 token 预算或消息数）
+    2. LLM 生成对话摘要替换头部
 
     支持两种分割模式：
     - Token 预算模式（推荐）：基于 token 数量保留尾部消息
     - 消息数模式：基于消息数量保留尾部消息
 
     Args:
-        messages: 消息列表
+        messages: 消息列表（dict 格式）
         keep_recent: 保留最近 N 条消息（仅当 use_token_budget=False 时生效）
         llm: LLM 实例
-        enable_micro_compact: 是否启用微压缩（默认 True）
-        micro_compact_keep_recent: 微压缩保留最近 N 个工具结果（默认 5）
         use_token_budget: 是否使用 Token 预算模式（默认 True）
         token_budget: 尾部 Token 预算（仅当 use_token_budget=True 时生效）
 
@@ -406,21 +402,13 @@ async def compact_messages(
             'tokens_before': 压缩前 token 数,
             'tokens_after': 压缩后 token 数,
             'messages_removed': 移除的消息数,
-            'micro_compact': 微压缩统计（如果启用）,
             'split_mode': 分割模式 ('token_budget' 或 'message_count'),
         }
     """
     # 计算压缩前 token 数
     tokens_before = count_messages_tokens(messages)
 
-    # 1. 微压缩：清理旧的工具结果
-    micro_result = None
-    if enable_micro_compact:
-        from utils.context.micro_compact import micro_compact_messages
-        micro_result = micro_compact_messages(messages, keep_recent=micro_compact_keep_recent)
-        messages = micro_result["messages"]
-
-    # 2. 分割消息
+    # 分割消息
     if use_token_budget and token_budget:
         # Token 预算模式
         to_summarize, to_keep = find_split_point_by_tokens(messages, token_budget)
@@ -434,7 +422,6 @@ async def compact_messages(
                 'tokens_before': tokens_before,
                 'tokens_after': count_messages_tokens(messages),
                 'messages_removed': 0,
-                'micro_compact': micro_result,
                 'split_mode': 'message_count',
             }
         to_summarize, to_keep = find_split_point(messages, keep_recent)
@@ -447,11 +434,10 @@ async def compact_messages(
             'tokens_before': tokens_before,
             'tokens_after': count_messages_tokens(to_keep),
             'messages_removed': 0,
-            'micro_compact': micro_result,
             'split_mode': split_mode,
         }
 
-    # 3. 生成摘要
+    # 生成摘要
     summary = await generate_summary(to_summarize, llm)
 
     # 创建摘要消息
@@ -470,6 +456,5 @@ async def compact_messages(
         'tokens_after': tokens_after,
         'messages_removed': len(to_summarize),
         'messages_kept': len(to_keep),
-        'micro_compact': micro_result,
         'split_mode': split_mode,
     }

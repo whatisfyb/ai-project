@@ -147,7 +147,7 @@ def _summarize_text_result(tool_name: str, content: str) -> str:
 
 def micro_compact_messages(
     messages: list[dict],
-    keep_recent: int = 5,
+    keep_recent: int = 10,
 ) -> dict[str, Any]:
     """微压缩消息列表 - 清理旧的工具结果
 
